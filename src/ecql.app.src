@@ -1,0 +1,14 @@
+{application, ecql,
+ [
+  {description, "An Erlang ecql library"},
+  {vsn, "1"},
+  {modules, [
+             ecql
+            ]},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {env, []}
+ ]}.
