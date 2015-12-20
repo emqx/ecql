@@ -1,1 +1,0 @@
--module(ecql_socket).

@@ -1,14 +1,13 @@
 {application, ecql,
  [
-  {description, "An Erlang ecql library"},
-  {vsn, "1"},
-  {modules, [
-             ecql
-            ]},
+  {description, "Cassandra Native CQL Driver"},
+  {vsn, "0.1"},
+  {modules, [ ]},
   {registered, []},
   {applications, [
                   kernel,
                   stdlib
                  ]},
-  {env, []}
+  {env, []},
+  {licences, ["MIT"]}
  ]}.
