@@ -54,67 +54,77 @@
 
 -type ssl_socket() :: #ssl_socket{}.
 
--define(IS_SSL(Socket), is_record(Socket, ssl_socket)).
+-define(IS_SSL(Sock), is_record(Sock, ssl_socket)).
 
 %% @doc Connect to Cassandra with TCP or SSL transport
--spec connect(ClientPid, Transport, Host, Port, TcpOpts) -> {ok, Socket, Receiver} | {error, term()} when
-    ClientPid   :: pid(),
-    Transport   :: tcp | ssl,
-    Host        :: inet:ip_address() | string(),
-    Port        :: inet:port_number(),
-    TcpOpts     :: [gen_tcp:connect_option()],
-    Socket      :: inet:socket() | ssl_socket(),
-    Receiver    :: pid().
+-spec connect(ClientPid, Transport, Host, Port, TcpOpts) -> {ok, Sock, Receiver} | {error, term()} when
+    ClientPid :: pid(),
+    Transport :: tcp | ssl,
+    Host      :: inet:ip_address() | string(),
+    Port      :: inet:port_number(),
+    TcpOpts   :: [gen_tcp:connect_option()],
+    Sock      :: inet:socket() | ssl_socket(),
+    Receiver  :: pid().
 connect(ClientPid, Transport, Host, Port, TcpOpts) when is_pid(ClientPid) ->
     case connect(Transport, Host, Port, TcpOpts) of
-        {ok, Socket} ->
-            ReceiverPid = spawn_link(?MODULE, receiver, [ClientPid, Socket]),
-            controlling_process(Socket, ReceiverPid),
-            {ok, Socket, ReceiverPid};
+        {ok, Sock} ->
+            ReceiverPid = spawn_link(?MODULE, receiver, [ClientPid, Sock]),
+            controlling_process(Sock, ReceiverPid),
+            {ok, Sock, ReceiverPid};
         {error, Reason} ->
             {error, Reason}
     end.
 
--spec connect(Transport, Host, Port, TcpOpts) -> {ok, Socket} | {error, any()} when
-    Transport   :: tcp | ssl,
-    Host        :: inet:ip_address() | string(),
-    Port        :: inet:port_number(),
-    TcpOpts     :: [gen_tcp:connect_option()],
-    Socket      :: inet:socket() | ssl_socket().
+-spec connect(Transport, Host, Port, TcpOpts) -> {ok, Sock} | {error, any()} when
+    Transport :: tcp | ssl,
+    Host      :: inet:ip_address() | string(),
+    Port      :: inet:port_number(),
+    TcpOpts   :: [gen_tcp:connect_option()],
+    Sock      :: inet:socket() | ssl_socket().
 connect(tcp, Host, Port, TcpOpts) ->
-    gen_tcp:connect(Host, Port, merge_opts(?TCPOPTIONS, TcpOpts), ?TIMEOUT);
+    case gen_tcp:connect(Host, Port, merge_opts(?TCPOPTIONS, TcpOpts), ?TIMEOUT) of
+        {ok, Sock} -> tune_buffer(Sock),
+                      {ok, Sock};
+        Error      -> Error
+    end;
 connect(ssl, Host, Port, TcpOpts) ->
     case gen_tcp:connect(Host, Port, merge_opts(?TCPOPTIONS, TcpOpts), ?TIMEOUT) of
-        {ok, Socket} ->
-            case ssl:connect(Socket, ?SSLOPTIONS, ?TIMEOUT) of
-                {ok, SslSocket} -> {ok, #ssl_socket{tcp = Socket, ssl = SslSocket}};
-                {error, SslReason} -> {error, SslReason}
+        {ok, Sock} ->
+            tune_buffer(Sock),
+            case ssl:connect(Sock, ?SSLOPTIONS, ?TIMEOUT) of
+                {ok, SslSock} -> {ok, #ssl_socket{tcp = Sock, ssl = SslSock}};
+                Error -> Error
             end;
-        {error, Reason} ->
-            {error, Reason}
+        Error ->
+            Error
     end.
 
-%% @doc Socket controlling process
-controlling_process(Socket, Pid) when is_port(Socket) ->
-    gen_tcp:controlling_process(Socket, Pid);
-controlling_process(#ssl_socket{ssl = SslSocket}, Pid) ->
-    ssl:controlling_process(SslSocket, Pid).
+tune_buffer(Sock) ->
+    {ok, [{recbuf, RecBuf}, {sndbuf, SndBuf}]}
+        = inet:getopts(Sock, [recbuf, sndbuf]),
+    inet:setopts(Sock, [{buffer, max(RecBuf, SndBuf)}]).
+
+%% @doc Sock controlling process
+controlling_process(Sock, Pid) when is_port(Sock) ->
+    gen_tcp:controlling_process(Sock, Pid);
+controlling_process(#ssl_socket{ssl = SslSock}, Pid) ->
+    ssl:controlling_process(SslSock, Pid).
 
 %% @doc Send Frame and Data
--spec send(Socket, Data) -> ok when 
-    Socket  :: inet:socket() | ssl_socket(),
-    Data    :: binary().
-send(Socket, Data) when is_port(Socket) ->
-    gen_tcp:send(Socket, Data);
-send(#ssl_socket{ssl = SslSocket}, Data) ->
-    ssl:send(SslSocket, Data).
+-spec send(Sock, Data) -> ok when 
+    Sock  :: inet:socket() | ssl_socket(),
+    Data  :: binary().
+send(Sock, Data) when is_port(Sock) ->
+    gen_tcp:send(Sock, Data);
+send(#ssl_socket{ssl = SslSock}, Data) ->
+    ssl:send(SslSock, Data).
 
-%% @doc Close Socket.
--spec close(Socket :: inet:socket() | ssl_socket()) -> ok.
-close(Socket) when is_port(Socket) ->
-    gen_tcp:close(Socket);
-close(#ssl_socket{ssl = SslSocket}) ->
-    ssl:close(SslSocket).
+%% @doc Close Sock.
+-spec close(Sock :: inet:socket() | ssl_socket()) -> ok.
+close(Sock) when is_port(Sock) ->
+    gen_tcp:close(Sock);
+close(#ssl_socket{ssl = SslSock}) ->
+    ssl:close(SslSock).
 
 %% @doc Stop Receiver.
 -spec stop(Receiver :: pid()) -> ok.
@@ -122,30 +132,30 @@ stop(Receiver) ->
     Receiver ! stop.
 
 %% @doc Set socket options.
-setopts(Socket, Opts) when is_port(Socket) ->
-    inet:setopts(Socket, Opts);
-setopts(#ssl_socket{ssl = SslSocket}, Opts) ->
-    ssl:setopts(SslSocket, Opts).
+setopts(Sock, Opts) when is_port(Sock) ->
+    inet:setopts(Sock, Opts);
+setopts(#ssl_socket{ssl = SslSock}, Opts) ->
+    ssl:setopts(SslSock, Opts).
 
 %% @doc Get socket stats.
--spec getstat(Socket, Stats) -> {ok, Values} | {error, any()} when 
-    Socket  :: inet:socket() | ssl_socket(),
-    Stats   :: list(),
-    Values  :: list().
-getstat(Socket, Stats) when is_port(Socket) ->
-    inet:getstat(Socket, Stats);
-getstat(#ssl_socket{tcp = Socket}, Stats) -> 
-    inet:getstat(Socket, Stats).
+-spec getstat(Sock, Stats) -> {ok, Values} | {error, any()} when 
+    Sock   :: inet:socket() | ssl_socket(),
+    Stats  :: list(),
+    Values :: list().
+getstat(Sock, Stats) when is_port(Sock) ->
+    inet:getstat(Sock, Stats);
+getstat(#ssl_socket{tcp = Sock}, Stats) -> 
+    inet:getstat(Sock, Stats).
 
-%% @doc Socket name.
--spec sockname(Socket) -> {ok, {Address, Port}} | {error, any()} when
-    Socket  :: inet:socket() | ssl_socket(),
+%% @doc Sock name.
+-spec sockname(Sock) -> {ok, {Address, Port}} | {error, any()} when
+    Sock    :: inet:socket() | ssl_socket(),
     Address :: inet:ip_address(),
     Port    :: inet:port_number().
-sockname(Socket) when is_port(Socket) ->
-    inet:sockname(Socket);
-sockname(#ssl_socket{ssl = SslSocket}) ->
-    ssl:sockname(SslSocket).
+sockname(Sock) when is_port(Sock) ->
+    inet:sockname(Sock);
+sockname(#ssl_socket{ssl = SslSock}) ->
+    ssl:sockname(SslSock).
 
 sockname_s(Sock) ->
     case sockname(Sock) of
@@ -155,43 +165,40 @@ sockname_s(Sock) ->
             Error
     end.
 
-%%%=============================================================================
-%%% Internal functions
-%%%=============================================================================
+%%% Receiver Loop
+receiver(ClientPid, Sock) ->
+    receiver_activate(ClientPid, Sock, ecql_frame:parser()).
 
-receiver(ClientPid, Socket) ->
-    receiver_activate(ClientPid, Socket, ecql_frame:parser()).
+receiver_activate(ClientPid, Sock, ParserFun) ->
+    setopts(Sock, [{active, once}]),
+    erlang:hibernate(?MODULE, receiver_loop, [ClientPid, Sock, ParserFun]).
 
-receiver_activate(ClientPid, Socket, ParserFun) ->
-    setopts(Socket, [{active, once}]),
-    erlang:hibernate(?MODULE, receiver_loop, [ClientPid, Socket, ParserFun]).
-
-receiver_loop(ClientPid, Socket, ParserFun) ->
+receiver_loop(ClientPid, Sock, ParserFun) ->
     receive
-        {tcp, Socket, Data} ->
+        {tcp, Sock, Data} ->
             case parse_received_data(ClientPid, Data, ParserFun) of
                 {ok, NewParserFun} ->
-                    receiver_activate(ClientPid, Socket, NewParserFun);
+                    receiver_activate(ClientPid, Sock, NewParserFun);
                 {error, Error} ->
                     gen_fsm:send_all_state_event(ClientPid, {frame_error, Error})
             end;
-        {tcp_error, Socket, Reason} ->
+        {tcp_error, Sock, Reason} ->
             connection_lost(ClientPid, {tcp_error, Reason});
-        {tcp_closed, Socket} ->
+        {tcp_closed, Sock} ->
             connection_lost(ClientPid, tcp_closed);
-        {ssl, _SslSocket, Data} ->
+        {ssl, _SslSock, Data} ->
             case parse_received_data(ClientPid, Data, ParserFun) of
                 {ok, NewParserFun} ->
-                    receiver_activate(ClientPid, Socket, NewParserFun);
+                    receiver_activate(ClientPid, Sock, NewParserFun);
                 {error, Error} ->
                     gen_fsm:send_all_state_event(ClientPid, {frame_error, Error})
             end;
-        {ssl_error, _SslSocket, Reason} ->
+        {ssl_error, _SslSock, Reason} ->
             connection_lost(ClientPid, {ssl_error, Reason});
-        {ssl_closed, _SslSocket} ->
+        {ssl_closed, _SslSock} ->
             connection_lost(ClientPid, ssl_closed);
         stop -> 
-            close(Socket)
+            close(Sock)
     end.
 
 parse_received_data(_ClientPid, <<>>, ParserFun) ->
@@ -202,7 +209,7 @@ parse_received_data(ClientPid, Data, ParserFun) ->
         {more, NewParserFun} ->
             {ok, NewParserFun};
         {ok, Frame, Rest} ->
-            gen_fsm:send_event(ClientPid, {received, Frame}),
+            gen_fsm:send_event(ClientPid, Frame),
             parse_received_data(ClientPid, Rest, ecql_frame:parser());
         {error, Error} ->
             {error, Error}

@@ -52,57 +52,60 @@
     [{K, V} || {K, V} <- ?record_to_proplist(Def, Rec),
                          lists:member(K, Fields)]).
 
--record(cql_frame, {version = ?VER_REQ, flags, stream, opcode, length, body, req, resp}).
+-record(ecql_frame, {version = ?VER_REQ, flags = 0, stream, opcode, length, body, req, resp}).
+
+-define(REQ_FRAME(OpCode, Resp), #ecql_frame{opcode = OpCode, req = Req}).
+
+-define(RESP_FRAME(OpCode, Resp), #ecql_frame{opcode = OpCode, resp = Resp}).
 
 %% Requests from Client -> Cassandra
--record(cql_startup_req, {version = <<"3.0.0">>, compression}).
+-record(ecql_startup, {version = <<"3.0.0">>, compression}).
 
--record(cql_auth_response, {token = <<>>}).
+-record(ecql_auth_response, {token = <<>>}).
 
--record(cql_options_req, {}).
+-record(ecql_options, {}).
 
--record(cql_query_parameters, {consistency, flags, values, skip_metadata,
-                               result_page_size, paging_state, serial_consistency,
-                               timestamp}).
+-record(ecql_query_parameters, {consistency, flags, values, skip_metadata,
+                                result_page_size, paging_state, serial_consistency,
+                                timestamp}).
 
--record(cql_query_req, {query, parameters :: #cql_query_parameters{}}).
+-record(ecql_query, {query, parameters :: #ecql_query_parameters{}}).
 
--record(cql_prepare_req, {query}).
+-record(ecql_prepare, {query}).
 
--record(cql_execute_req, {id, parameters}).
+-record(ecql_execute, {id, parameters}).
 
--record(cql_batch_query, {kind, string_or_id, values}).
+-record(ecql_batch_query, {kind, string_or_id, values}).
 
--record(cql_batch_req, {type, queries :: [#cql_batch_query{}],
-                        consistency, flags, with_names :: boolean(),
-                        serial_consistency, timestamp}).
+-record(ecql_batch, {type, queries :: [#ecql_batch_query{}],
+                     consistency, flags, with_names :: boolean(),
+                     serial_consistency, timestamp}).
 
--record(cql_register_req, {event_types :: list(string())}).
+-record(ecql_register, {event_types :: list(string())}).
 
 %% Response from Cassandra -> Client
 
--record(cql_error, {code, message}).
+-record(ecql_error, {code, message}).
 
--record(cql_ready_resp, {}).
+-record(ecql_ready, {}).
 
--record(cql_authenticate_resp, {class_name}).
+-record(ecql_authenticate, {class}).
 
--record(cql_supported_resp, {options}).
+-record(ecql_supported, {options}).
 
--type cql_result_kind() :: void | rows | set_keyspace | prepared | schema_change.
+-type ecql_result_kind() :: void | rows | set_keyspace | prepared | schema_change.
 
--record(cql_result_rows, {metadata, rows_count, rows_content}).
+-record(ecql_rows_result, {metadata, rows_count, rows_content}).
 
--record(cql_result_schema_change, {change_type, target, options}).
+-record(ecql_schema_change_result, {change_type, target, options}).
 
--record(cql_result_prepared, {id, metadata, result_metadata}).
+-record(ecql_prepared_result, {id, metadata, result_metadata}).
 
--record(cql_result_resp, {kind :: cql_result_kind(), result}).
+-record(ecql_result, {kind :: ecql_result_kind(), result}).
 
--record(cql_event, {type}).
+-record(ecql_event, {type}).
 
--record(cql_auth_challenge, {token}).
+-record(ecql_auth_challenge, {token}).
 
--record(cql_auth_success, {token}).
-
+-record(ecql_auth_success, {token}).
 

@@ -43,7 +43,7 @@
 
 -include("ecql_frame.hrl").
 
--export([parser/0, serialize/1]).
+-export([parser/0, make/2, serialize/1]).
 
 -ifdef(TEST).
 -compile(export_all).
@@ -61,71 +61,72 @@ parse(Bin, none) when size(Bin) < ?HEADER_SIZE ->
     {more, fun(More) -> parse(<<Bin/binary, More/binary>>, none) end};
 
 parse(<<?VER_RESP:8, Flags:8, Stream:16, OpCode:8, Length:32, Bin/binary>>, none) ->
-    parse_body(Bin, #cql_frame{version = ?VER_RESP, flags = Flags,
-                               stream = Stream, opcode = OpCode,
-                               length = Length});
+    parse_body(Bin, #ecql_frame{version = ?VER_RESP, flags = Flags,
+                                stream = Stream, opcode = OpCode,
+                                length = Length});
 
 parse(Bin, Cont) -> Cont(Bin).
 
-parse_body(Bin, Frame = #cql_frame{length = 0}) ->
-    {ok, Frame, Bin};
 
-parse_body(Bin, Frame = #cql_frame{length = Len}) when size(Bin) < Len ->
+%%parse_body(Bin, Frame = #ecql_frame{length = 0}) ->
+%%   {ok, Frame, Bin};
+
+parse_body(Bin, Frame = #ecql_frame{length = Len}) when size(Bin) < Len ->
     {more, fun(More) -> parse_body(<<Bin/binary, More/binary>>, Frame) end};
 
-parse_body(Bin, Frame = #cql_frame{length = Len}) ->
+parse_body(Bin, Frame = #ecql_frame{length = Len}) ->
     <<Body:Len/binary, Rest/binary>> = Bin,
-    Resp = parse_resp(Frame#cql_frame{body = Body}), 
-    {ok, Frame#cql_frame{resp = Resp}, Rest}.
+    Resp = parse_resp(Frame#ecql_frame{body = Body}), 
+    {ok, Frame#ecql_frame{resp = Resp}, Rest}.
 
-parse_resp(#cql_frame{opcode = ?OPCODE_ERROR, body = Body}) ->
+parse_resp(#ecql_frame{opcode = ?OPCODE_ERROR, body = Body}) ->
     <<Code:?int, Rest/binary>> = Body,
     {Message, Rest1} = parse_string(Rest),
-    #cql_error{code = Code, message = Message};
+    #ecql_error{code = Code, message = Message};
 
-parse_resp(#cql_frame{opcode = ?OPCODE_READY}) ->
-    #cql_ready_resp{};
+parse_resp(#ecql_frame{opcode = ?OPCODE_READY}) ->
+    #ecql_ready{};
 
-parse_resp(#cql_frame{opcode = ?OPCODE_AUTHENTICATE, body = Body}) ->
-    {ClassName, Rest} = parse_string(Body),
-    #cql_authenticate_resp{class_name = ClassName};
+parse_resp(#ecql_frame{opcode = ?OPCODE_AUTHENTICATE, body = Body}) ->
+    {ClassName, _Rest} = parse_string(Body),
+    #ecql_authenticate{class = ClassName};
 
-parse_resp(#cql_frame{opcode = ?OPCODE_SUPPORTED, body = Body}) ->
+parse_resp(#ecql_frame{opcode = ?OPCODE_SUPPORTED, body = Body}) ->
     {Multimap, _Rest} =  parse_string_multimap(Body),
-    #cql_supported_resp{options = Multimap};
+    #ecql_supported{options = Multimap};
 
-parse_resp(#cql_frame{opcode = ?OPCODE_RESULT, body = Body}) ->
+parse_resp(#ecql_frame{opcode = ?OPCODE_RESULT, body = Body}) ->
     <<Kind:?int, Bin/binary>> = Body,
-    parse_result(Bin, #cql_result_resp{kind = result_kind(Kind)});
+    parse_result(Bin, #ecql_result{kind = result_kind(Kind)});
 
-parse_resp(#cql_frame{opcode = ?OPCODE_EVENT, body = Body}) ->
+parse_resp(#ecql_frame{opcode = ?OPCODE_EVENT, body = Body}) ->
     %%TODO:...
     {EventType, Rest} = parse_string(Body),
-    #cql_event{type = EventType};
+    #ecql_event{type = EventType};
     
-parse_resp(#cql_frame{opcode = ?OPCODE_AUTH_CHALLENGE, body = Body}) ->
+parse_resp(#ecql_frame{opcode = ?OPCODE_AUTH_CHALLENGE, body = Body}) ->
     {Token, _Rest} = parse_bytes(Body),
-    #cql_auth_challenge{token = Token};
+    #ecql_auth_challenge{token = Token};
 
-parse_resp(#cql_frame{opcode = ?OPCODE_AUTH_SUCCESS, body = <<>>}) ->
-    #cql_auth_success{token = <<>>};
+parse_resp(#ecql_frame{opcode = ?OPCODE_AUTH_SUCCESS, body = <<>>}) ->
+    #ecql_auth_success{token = <<>>};
 
-parse_resp(#cql_frame{opcode = ?OPCODE_AUTH_SUCCESS, body = Body}) ->
+parse_resp(#ecql_frame{opcode = ?OPCODE_AUTH_SUCCESS, body = Body}) ->
     {Token, _Rest} = parse_bytes(Body),
-    #cql_auth_success{token = Token}.
+    #ecql_auth_success{token = Token}.
 
-parse_result(_Bin, Resp = #cql_result_resp{kind = void}) ->
+parse_result(_Bin, Resp = #ecql_result{kind = void}) ->
     Resp;
-parse_result(Bin, Resp = #cql_result_resp{kind = rows}) ->
+parse_result(Bin, Resp = #ecql_result{kind = rows}) ->
     %%TODO:
     Resp;
-parse_result(Bin, Resp = #cql_result_resp{kind = set_keyspace}) ->
+parse_result(Bin, Resp = #ecql_result{kind = set_keyspace}) ->
     {Keyspace, _Rest} = parse_string(Bin),
-    Resp#cql_result_resp{result = Keyspace};
-parse_result(Bin, Resp = #cql_result_resp{kind = prepared}) ->
+    Resp#ecql_result{result = Keyspace};
+parse_result(Bin, Resp = #ecql_result{kind = prepared}) ->
     %%TODO:
     Resp;
-parse_result(Bin, Resp = #cql_result_resp{kind = schema_change}) ->
+parse_result(Bin, Resp = #ecql_result{kind = schema_change}) ->
     %%TODO:
     Resp.
 
@@ -157,14 +158,19 @@ parse_bytes(<<Size:?int, Bin/binary>>) ->
     <<Bytes:Size/binary, Rest/binary>> = Bin,
     {Bytes, Rest}.
 
+make(startup, StreamId) ->
+    #ecql_frame{flags = 0, stream = StreamId,
+                opcode = ?OPCODE_STARTUP,
+                req = #ecql_startup{}}.
+
 serialize(Frame) ->
     serialize(header, serialize(body, Frame)).
 
-serialize(body, Frame = #cql_frame{req = Req}) ->
+serialize(body, Frame = #ecql_frame{req = Req}) ->
     Body = serialize_req(Req),
-    Frame#cql_frame{length = size(Body), body = Body};
+    Frame#ecql_frame{length = size(Body), body = Body};
     
-serialize(header, #cql_frame{version = Version,
+serialize(header, #ecql_frame{version = Version,
                              flags   = Flags,
                              stream  = Stream,
                              opcode  = OpCode,
@@ -172,31 +178,31 @@ serialize(header, #cql_frame{version = Version,
                              body    = Body}) ->
     <<Version:8, Flags:8, Stream:16, OpCode:8, Length:32, Body/binary>>.
 
-serialize_req(#cql_startup_req{version = Ver, compression = undefined}) ->
+serialize_req(#ecql_startup{version = Ver, compression = undefined}) ->
     serialize_string_map([{<<"CQL_VERSION">>, Ver}]);
-serialize_req(#cql_startup_req{version = Ver, compression = Comp}) ->
+serialize_req(#ecql_startup{version = Ver, compression = Comp}) ->
     serialize_string_map([{<<"CQL_VERSION">>, Ver}, {<<"COMPRESSION">>, Comp}]);
 
-serialize_req(#cql_auth_response{token = Token}) ->
+serialize_req(#ecql_auth_response{token = Token}) ->
     serialize_bytes(Token);
 
-serialize_req(#cql_options_req{}) ->
+serialize_req(#ecql_options{}) ->
     <<>>;
 
-serialize_req(#cql_query_req{query = Query, parameters = Parameters}) ->
+serialize_req(#ecql_query{query = Query, parameters = Parameters}) ->
     << (serialize_long_string(Query))/binary, (serialize_query_parameters(Parameters))/binary >>;
 
-serialize_req(#cql_prepare_req{query = Query}) ->
+serialize_req(#ecql_prepare{query = Query}) ->
     serialize_long_string(Query);
 
-serialize_req(#cql_execute_req{id = Id, parameters = Parameters}) ->
+serialize_req(#ecql_execute{id = Id, parameters = Parameters}) ->
     << (serialize_short_bytes(Id))/binary, (serialize_query_parameters(Parameters))/binary >>;
 
-serialize_req(#cql_batch_req{type = Type, queries = Queries,
-                             consistency = Consistency,
-                             flags = Flags, with_names = WithNames,
-                             serial_consistency = SerialConsistency,
-                             timestamp = Timestamp}) ->
+serialize_req(#ecql_batch{type = Type, queries = Queries,
+                          consistency = Consistency,
+                          flags = Flags, with_names = WithNames,
+                          serial_consistency = SerialConsistency,
+                          timestamp = Timestamp}) ->
 
     QueriesBin = << <<(serialize_batch_query(Query))/binary>> || Query <- Queries >>,
 
@@ -210,13 +216,13 @@ serialize_req(#cql_batch_req{type = Type, queries = Queries,
 
     <<Type:?byte, (length(Queries)):?short, QueriesBin/binary, Consistency:?short, Flags:?byte, ParamtersBin/binary>>;
 
-serialize_req(#cql_register_req{event_types = EventTypes}) ->
+serialize_req(#ecql_register{event_types = EventTypes}) ->
     serialize_string_list(EventTypes).
 
-serialize_batch_query(#cql_batch_query{kind = 0, string_or_id = Str, values = Values}) ->
+serialize_batch_query(#ecql_batch_query{kind = 0, string_or_id = Str, values = Values}) ->
     <<0:?byte, (serialize_long_string(Str))/binary, (serialize_batch_query_values(Values))/binary>>;
 
-serialize_batch_query(#cql_batch_query{kind = 1, string_or_id = Id, values = Values}) ->
+serialize_batch_query(#ecql_batch_query{kind = 1, string_or_id = Id, values = Values}) ->
     <<0:?byte, (serialize_short_bytes(Id))/binary, (serialize_batch_query_values(Values))/binary>>.
 
 serialize_batch_query_values([]) ->
@@ -229,7 +235,7 @@ serialize_batch_query_values([H|_] = Values) when is_binary(H) ->
     ValuesBin = << <<(serialize_bytes(Val))/binary>> || Val <- Values >>,
     << (length(Values)):?short, ValuesBin/binary>>.
     
-serialize_query_parameters(#cql_query_parameters{consistency = Consistency,
+serialize_query_parameters(#ecql_query_parameters{consistency = Consistency,
                                                  values = Values,
                                                  skip_metadata = SkipMetadata,
                                                  result_page_size = PageSize,
@@ -238,7 +244,7 @@ serialize_query_parameters(#cql_query_parameters{consistency = Consistency,
                                                  timestamp = Timestamp} = QueryParameters) ->
     Flags = <<0:1, (flag(values, Values)):1, (flag(Timestamp)):1, (flag(SerialConsistency)):1,
               (flag(PagingState)):1, (flag(PageSize)):1, (flag(SkipMetadata)):1, (flag(Values)):1>>,
-    [_H|Parameters] = ?record_to_proplist(cql_query_parameters, QueryParameters),
+    [_H|Parameters] = ?record_to_proplist(ecql_query_parameters, QueryParameters),
 
     Bin = << <<(serialize_parameter(Name, Val))/binary>> || {Name, Val} <- Parameters, Val =/= undefined >>,
 
@@ -269,7 +275,8 @@ serialize_string_multimap(Map) ->
     <<(length(Map)):?short, Bin/binary>>.
 
 serialize_string_map(Map) ->
-    << <<(serialize_string(K))/binary, (serialize_string(V))/binary>> || {K, V} <- Map >>.
+    Bin = << <<(serialize_string(K))/binary, (serialize_string(V))/binary>> || {K, V} <- Map >>,
+    <<(length(Map)):?short, Bin/binary>>.
 
 serialize_string_list(List) ->
     Bin = << <<(serialize_string(S))/binary>> || S <- List >>,
