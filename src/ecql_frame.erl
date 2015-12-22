@@ -43,11 +43,13 @@
 
 -include("ecql_frame.hrl").
 
--export([parser/0, make/2, serialize/1]).
+-export([parser/0, serialize/1]).
 
 -ifdef(TEST).
 -compile(export_all).
 -endif.
+
+-define(HEADER_SIZE,    9).
 
 %% @doc Initialize a parser
 parser() ->
@@ -67,69 +69,204 @@ parse(<<?VER_RESP:8, Flags:8, Stream:16, OpCode:8, Length:32, Bin/binary>>, none
 
 parse(Bin, Cont) -> Cont(Bin).
 
-
-%%parse_body(Bin, Frame = #ecql_frame{length = 0}) ->
-%%   {ok, Frame, Bin};
-
 parse_body(Bin, Frame = #ecql_frame{length = Len}) when size(Bin) < Len ->
     {more, fun(More) -> parse_body(<<Bin/binary, More/binary>>, Frame) end};
 
 parse_body(Bin, Frame = #ecql_frame{length = Len}) ->
     <<Body:Len/binary, Rest/binary>> = Bin,
-    Resp = parse_resp(Frame#ecql_frame{body = Body}), 
+    Resp = parse_resp(Frame#ecql_frame{body = Body}),
     {ok, Frame#ecql_frame{resp = Resp}, Rest}.
 
-parse_resp(#ecql_frame{opcode = ?OPCODE_ERROR, body = Body}) ->
+parse_resp(#ecql_frame{opcode = ?OP_ERROR, body = Body}) ->
     <<Code:?int, Rest/binary>> = Body,
     {Message, Rest1} = parse_string(Rest),
-    #ecql_error{code = Code, message = Message};
+    parse_error(Rest1, #ecql_error{code = Code, message = Message});
 
-parse_resp(#ecql_frame{opcode = ?OPCODE_READY}) ->
+parse_resp(#ecql_frame{opcode = ?OP_READY}) ->
     #ecql_ready{};
 
-parse_resp(#ecql_frame{opcode = ?OPCODE_AUTHENTICATE, body = Body}) ->
+parse_resp(#ecql_frame{opcode = ?OP_AUTHENTICATE, body = Body}) ->
     {ClassName, _Rest} = parse_string(Body),
     #ecql_authenticate{class = ClassName};
 
-parse_resp(#ecql_frame{opcode = ?OPCODE_SUPPORTED, body = Body}) ->
+parse_resp(#ecql_frame{opcode = ?OP_SUPPORTED, body = Body}) ->
     {Multimap, _Rest} =  parse_string_multimap(Body),
     #ecql_supported{options = Multimap};
 
-parse_resp(#ecql_frame{opcode = ?OPCODE_RESULT, body = Body}) ->
+parse_resp(#ecql_frame{opcode = ?OP_RESULT, body = Body}) ->
     <<Kind:?int, Bin/binary>> = Body,
     parse_result(Bin, #ecql_result{kind = result_kind(Kind)});
 
-parse_resp(#ecql_frame{opcode = ?OPCODE_EVENT, body = Body}) ->
+parse_resp(#ecql_frame{opcode = ?OP_EVENT, body = Body}) ->
     %%TODO:...
     {EventType, Rest} = parse_string(Body),
     #ecql_event{type = EventType};
     
-parse_resp(#ecql_frame{opcode = ?OPCODE_AUTH_CHALLENGE, body = Body}) ->
+parse_resp(#ecql_frame{opcode = ?OP_AUTH_CHALLENGE, body = Body}) ->
     {Token, _Rest} = parse_bytes(Body),
     #ecql_auth_challenge{token = Token};
 
-parse_resp(#ecql_frame{opcode = ?OPCODE_AUTH_SUCCESS, body = <<>>}) ->
+parse_resp(#ecql_frame{opcode = ?OP_AUTH_SUCCESS, body = <<>>}) ->
     #ecql_auth_success{token = <<>>};
 
-parse_resp(#ecql_frame{opcode = ?OPCODE_AUTH_SUCCESS, body = Body}) ->
+parse_resp(#ecql_frame{opcode = ?OP_AUTH_SUCCESS, body = Body}) ->
     {Token, _Rest} = parse_bytes(Body),
     #ecql_auth_success{token = Token}.
+
+parse_error(_Bin, Error = #ecql_error{code = Code}) ->
+    Error.
 
 parse_result(_Bin, Resp = #ecql_result{kind = void}) ->
     Resp;
 parse_result(Bin, Resp = #ecql_result{kind = rows}) ->
-    %%TODO:
-    Resp;
+    {Meta, Rest}   = parse_rows_meta(Bin),
+    {Rows, _Rest1} = parse_rows_content(Meta, Rest),
+    Resp#ecql_result{result = #ecql_rows_result{meta = Meta, rows = Rows}};
 parse_result(Bin, Resp = #ecql_result{kind = set_keyspace}) ->
     {Keyspace, _Rest} = parse_string(Bin),
-    Resp#ecql_result{result = Keyspace};
+    Result = #ecql_set_keyspace_result{keyspace = Keyspace},
+    Resp#ecql_result{result = Result};
 parse_result(Bin, Resp = #ecql_result{kind = prepared}) ->
-    %%TODO:
-    Resp;
-parse_result(Bin, Resp = #ecql_result{kind = schema_change}) ->
-    %%TODO:
-    Resp.
+    {Id, _Rest} = parse_short_bytes(Bin),
+    Result = #ecql_prepared_result{id = Id},
+    Resp#ecql_result{result = Result};
 
+parse_result(Bin, Resp = #ecql_result{kind = schema_change}) ->
+    Resp#ecql_result{result = parse_schema_change(Bin)}.
+
+parse_schema_change(Bin) ->
+    {Type,    Rest}  = parse_string(Bin),
+    {Target,  Rest1} = parse_string(Rest),
+    {Options, _}     = parse_string(Rest1),
+    #ecql_schema_change_result{type = Type, target = Target, options = Options}.
+
+parse_rows_meta(<<Flags:4/binary, Count:?int, Bin/binary>>) ->
+    <<_Unused:29, NoMetadata:1, HashMorePages:1, GlobalTabSpec:1>> = Flags,
+    {PagingState, Rest} = parse_paging_state(bool(HashMorePages), Bin),
+    {TableSpec, Rest1} = parse_global_table_spec(bool(GlobalTabSpec), Rest),
+    {Columns, Rest2} = parse_columns(bool(NoMetadata), bool(GlobalTabSpec), Count, Rest1),
+    {#ecql_rows_meta{count = Count, columns = Columns, paging_state = PagingState, table_spec = TableSpec}, Rest2}.
+
+parse_paging_state(false, Bin) ->
+    {undefined, Bin};
+parse_paging_state(true, Bin) ->
+    parse_bytes(Bin).
+
+parse_global_table_spec(false, Bin) ->
+    {undefined, Bin};
+parse_global_table_spec(true, Bin) ->
+    {Keyspace, Rest} = parse_string(Bin),
+    {Table, Rest1} = parse_string(Rest),
+    {<<Keyspace/binary, ".", Table/binary>>, Rest1}.
+
+parse_columns(true, _GlobalTabSpec, _Count, Bin) ->
+    {[], Bin};
+parse_columns(false, _GlobalTabSpec, 0, Bin) ->
+    {[], Bin};
+parse_columns(false, GlobalTabSpec, Count, Bin) ->
+    parse_column(GlobalTabSpec, Count, Bin).
+
+parse_column(GlobalTabSpec, Count, Bin) ->
+    parse_column(GlobalTabSpec, Count, Bin, []).
+
+parse_column(_GlobalTabSpec, 0, Bin, Acc) ->
+    {lists:reverse(Acc), Bin};
+parse_column(true, N, Bin, Acc) ->
+    {Column, Rest} = parse_string(Bin),
+    %%TODO: extra?
+    {Type, Extra, Rest1} = parse_type(Rest), 
+    parse_column(true, N - 1, Rest1, [{Column, Type, Extra}|Acc]);
+    
+parse_column(false, N, Bin, Acc) ->
+    {Keyspace, Rest} = parse_string(Bin),
+    {Table, Rest1} = parse_string(Rest),
+    {Column, Rest2} = parse_string(Rest1),
+    {Type, Extra, Rest3} = parse_type(Rest2),
+    parse_column(false, N - 1, Rest3, [{Column, Type, Extra}|Acc]).
+
+parse_type(<<?TYPE_CUSTOM:?short, Bin/binary>>) ->
+    {Class, Rest} = parse_string(Bin),
+    {custom, Class, Rest};
+parse_type(<<?TYPE_ASCII:?short, Bin/binary>>) ->
+    {ascii, undefined, Bin};
+parse_type(<<?TYPE_BIGINT:?short, Bin/binary>>) ->
+    {bigint, undefined, Bin};
+parse_type(<<?TYPE_BLOB:?short, Bin/binary>>) ->
+    {blob, undefined, Bin};
+parse_type(<<?TYPE_BOOLEAN:?short, Bin/binary>>) ->
+    {boolean, undefined, Bin};
+parse_type(<<?TYPE_COUNTER:?short, Bin/binary>>) ->
+    {counter, undefined, Bin};
+parse_type(<<?TYPE_DECIMAL:?short, Bin/binary>>) ->
+    {decimal, undefined, Bin};
+parse_type(<<?TYPE_DOUBLE:?short, Bin/binary>>) ->
+    {double, undefined, Bin};
+parse_type(<<?TYPE_FLOAT:?short, Bin/binary>>) ->
+    {float, undefined, Bin};
+parse_type(<<?TYPE_INT:?short, Bin/binary>>) ->
+    {int, undefined, Bin};
+parse_type(<<?TYPE_TIMESTAMP:?short, Bin/binary>>) ->
+    {timestamp, undefined, Bin};
+parse_type(<<?TYPE_UUID:?short, Bin/binary>>) ->
+    {uuid, undefined, Bin};
+parse_type(<<?TYPE_VARCHAR:?short, Bin/binary>>) ->
+    {varchar, undefined, Bin};
+parse_type(<<?TYPE_VARINT:?short, Bin/binary>>) ->
+    {varint, undefined, Bin};
+parse_type(<<?TYPE_TIMEUUID:?short, Bin/binary>>) ->
+    {timeuuid, undefined, Bin};
+parse_type(<<?TYPE_INET:?short, Bin/binary>>) ->
+    {inet, undefined, Bin};
+parse_type(<<?TYPE_LIST:?short, Bin/binary>>) ->
+    {Type, Extra, Rest} = parse_type(Bin),
+    {list, {Type, Extra}, Rest};
+parse_type(<<?TYPE_MAP:?short, Bin/binary>>) ->
+    {KeyType, KeyExtra, Rest} = parse_type(Bin),
+    {ValType, ValExtra, Rest1} = parse_type(Rest),
+    {map, {{KeyType, KeyExtra}, {ValType, ValExtra}}, Rest1};
+parse_type(<<?TYPE_SET:?short, Bin/binary>>) ->
+    {Type, Extra, Rest} = parse_type(Bin),
+    {set, {Type, Extra}, Rest};
+parse_type(<<?TYPE_UDT:?short, _Bin/binary>>) ->
+    throw({error, unsupport_udt_type});
+parse_type(<<?TYPE_TUPLE:?short, Bin/binary>>) ->
+    <<N:?short, Rest/binary>> = Bin,
+    {Rest1, ElTypes} =
+    lists:foldl(fun(_I, {Rest1, Acc}) ->
+            {Type, Extra, Rest2} = parse_type(Rest1),
+            {Rest2, [{Type, Extra}|Acc]}
+        end, {Rest, []}, lists:seq(1, N)),
+    {tuple, lists:reverse(ElTypes), Rest1}.
+
+parse_rows_content(Meta, <<Count:?int, Bin/binary>>) ->
+    parse_rows_content(Meta, Count, Bin).
+
+parse_rows_content(Meta, Count, Bin) ->
+    parse_row(Meta, Count, Bin, []).
+
+parse_row(_Meta, 0, Bin, Rows) ->
+    {lists:reverse(Rows), Bin};
+
+parse_row(Meta, Count, Bin, Rows) ->
+    {Row, Rest} = parse_row(Meta, Bin),
+    parse_row(Meta, Count - 1, Rest, [Row|Rows]).
+
+parse_row(#ecql_rows_meta{columns = Columns}, Bin) ->
+    {Cells, Rest} = lists:foldl(fun(Col, {CellAcc, LeftBin}) ->
+                    {Cell, LeftBin1} = parse_cell(Col, LeftBin),
+                    {[Cell | CellAcc], LeftBin1}
+            end, {[], Bin}, Columns),
+    {lists:reverse(Cells), Rest}.
+
+parse_cell(_Col, <<16#FFFFFFFF:32, Bin/binary>>) ->
+    {null, Bin};
+parse_cell(Col, Bin) ->
+    {Val, Rest} = parse_bytes(Bin),
+    {parse_cell_val(Col, Val), Rest}.
+
+%% TODO:...
+parse_cell_val(Col, Val) -> Val.
+    
 parse_string_multimap(<<Len:?short, Bin/binary>>) ->
     parse_string_multimap(Len, Bin, []).
 
@@ -158,10 +295,9 @@ parse_bytes(<<Size:?int, Bin/binary>>) ->
     <<Bytes:Size/binary, Rest/binary>> = Bin,
     {Bytes, Rest}.
 
-make(startup, StreamId) ->
-    #ecql_frame{flags = 0, stream = StreamId,
-                opcode = ?OPCODE_STARTUP,
-                req = #ecql_startup{}}.
+parse_short_bytes(<<Size:?short, Bin/binary>>) ->
+    <<Bytes:Size/binary, Rest/binary>> = Bin,
+    {Bytes, Rest}.
 
 serialize(Frame) ->
     serialize(header, serialize(body, Frame)).
@@ -171,11 +307,11 @@ serialize(body, Frame = #ecql_frame{req = Req}) ->
     Frame#ecql_frame{length = size(Body), body = Body};
     
 serialize(header, #ecql_frame{version = Version,
-                             flags   = Flags,
-                             stream  = Stream,
-                             opcode  = OpCode,
-                             length  = Length,
-                             body    = Body}) ->
+                              flags   = Flags,
+                              stream  = Stream,
+                              opcode  = OpCode,
+                              length  = Length,
+                              body    = Body}) ->
     <<Version:8, Flags:8, Stream:16, OpCode:8, Length:32, Body/binary>>.
 
 serialize_req(#ecql_startup{version = Ver, compression = undefined}) ->
@@ -250,6 +386,9 @@ serialize_query_parameters(#ecql_query_parameters{consistency = Consistency,
 
     <<Consistency:?short, Flags/binary, Bin/binary>>.
 
+serialize_parameter(values, []) ->
+    <<>>;
+
 serialize_parameter(values, [H |_] = Vals) when is_tuple(H) ->
     Bin = << <<(serialize_string(Name))/binary, (serialize_bytes(Val))/binary>> || {Name, Val} <- Vals >>,
     <<(length(Vals)):?short, Bin/binary>>;
@@ -286,7 +425,7 @@ serialize_string(S) ->
     <<(size(S)):?short, S/binary>>.
 
 serialize_long_string(S) ->
-    <<(size(S)):?long, S/binary>>.
+    <<(size(S)):?int, S/binary>>.
 
 serialize_short_bytes(Bytes) ->
     <<(size(Bytes)):?short, Bytes/binary>>.
@@ -322,3 +461,5 @@ flag(false)     -> 0;
 flag(true)      -> 1;
 flag(_Val)      -> 1.
 
+bool(1) -> true;
+bool(0) -> false.

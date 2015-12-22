@@ -34,7 +34,7 @@
 -import(proplists, [get_value/2, get_value/3]).
 
 %% API Function Exports
--export([start_link/1, start_link/2, query/2, query/3]).
+-export([start_link/1, start_link/2, query/2, query/3, prepare/2]).
 
 %% gen_fsm Function Exports
 -export([startup/2, startup/3, waiting_for_ready/2, waiting_for_ready/3,
@@ -58,6 +58,7 @@
                 receiver  :: pid(),
                 callers   :: list(),
                 requests  :: dict:dict(),
+                prepared  :: list(),
                 logger    :: gen_logger:logmod(),
                 ssl       :: boolean(),
                 ssl_opts  :: [ssl:ssl_option()], 
@@ -96,8 +97,8 @@ query(Pid, Query) ->
 query(Pid, Query, Values) ->
     gen_fsm:sync_send_event(Pid, {query, bin(Query), Values}).
 
-bin(S) when is_list(S)   -> list_to_binary(S);
-bin(B) when is_binary(B) -> B.
+prepare(Pid, Query) -> 
+    gen_fsm:sync_send_event(Pid, {prepare, bin(Query)}).
 
 %% gen_fsm Function Definitions
 
@@ -125,22 +126,22 @@ startup({connect, TcpOpts}, From, StateData = #state{stream_id = StreamId,
                                                      callers = Callers}) ->
     case connect_cassa(StateData#state{tcp_opts = TcpOpts}) of
         {ok, NewStateData} ->
-            send(ecql_frame:make(startup, StreamId), NewStateData),
+            send(ecql_proto:startup_frame(StreamId), NewStateData),
             {next_state, waiting_for_ready,
              next_stream_id(NewStateData#state{callers = [{connect, From}|Callers]})};
         Error ->
             {stop, Error, Error, StateData}
     end.
 
-waiting_for_ready(?RESP_FRAME(?OPCODE_READY, #ecql_ready{}), StateData = #state{callers = Callers}) ->
+waiting_for_ready(?RESP_FRAME(?OP_READY, #ecql_ready{}), StateData = #state{callers = Callers}) ->
     {next_state, established, StateData#state{
             callers = reply(connect, ok, Callers)}};
 
-waiting_for_ready(?RESP_FRAME(?OPCODE_ERROR, #ecql_error{message = Message}), StateData = #state{callers = Callers}) ->
+waiting_for_ready(?RESP_FRAME(?OP_ERROR, #ecql_error{message = Message}), StateData = #state{callers = Callers}) ->
     reply(connect, {error, Message}, Callers),
     {stop, ecql_error, StateData};
 
-waiting_for_ready(?RESP_FRAME(?OPCODE_AUTHENTICATE, #ecql_authenticate{class = Class}), StateData) ->
+waiting_for_ready(?RESP_FRAME(?OP_AUTHENTICATE, #ecql_authenticate{class = Class}), StateData) ->
     io:format("Auth Class: ~p~n", [Class]),
     %%TODO: send auth_response and timeout
     {next_state, wating_for_auth, StateData}.
@@ -148,31 +149,46 @@ waiting_for_ready(?RESP_FRAME(?OPCODE_AUTHENTICATE, #ecql_authenticate{class = C
 waiting_for_ready(_Event, _From, StateData) ->
     {reply, {error, waiting_for_ready}, waiting_for_ready, StateData}.
 
-waiting_for_auth(?RESP_FRAME(?OPCODE_AUTH_CHALLENGE, #ecql_auth_challenge{token = Token}), StateData) ->
+waiting_for_auth(?RESP_FRAME(?OP_AUTH_CHALLENGE, #ecql_auth_challenge{token = Token}), StateData) ->
     io:format("Auth Challenge: ~p~n", [Token]),
     {next_state, wating_for_auth, StateData};
 
-waiting_for_auth(?RESP_FRAME(?OPCODE_AUTH_SUCCESS, #ecql_auth_success{token = Token}), StateData) ->
+waiting_for_auth(?RESP_FRAME(?OP_AUTH_SUCCESS, #ecql_auth_success{token = Token}), StateData) ->
     io:format("Auth Success: ~p~n", [Token]),
     %%TODO: return to caller...
     {next_state, wating_for_auth, StateData};
 
-waiting_for_auth(?RESP_FRAME(?OPCODE_ERROR, #ecql_error{message = Message}), StateData) ->
+waiting_for_auth(?RESP_FRAME(?OP_ERROR, #ecql_error{message = Message}), StateData) ->
     io:format("Auth Error: ~p~n", [Message]),
     {next_state, wating_for_auth, StateData}.
 
 waiting_for_auth(_Event, _From, StateData) ->
     {reply, {error, waiting_for_auth}, waiting_for_auth, StateData}.
 
+established(Frame = ?RESULT_FRAME(_Kind, Result), State = #state{logger = Logger}) ->
+    ?LOG(Logger, info, "~p", [Result]),
+    NewState = reply(Frame, State),
+    {next_state, established, NewState};
+
+established(Frame = ?ERROR_FRAME(#ecql_error{}), State = #state{logger = Logger}) ->
+    ?LOG(Logger, error, "~p", [Frame]),
+    NewState = reply(Frame, State),
+    {next_state, established, NewState};
+
 established(_Event, State) ->
     {next_state, established, State}.
 
-established({query, Query}, From, State= #state{stream_id = StreamId, requests = Reqs}) ->
-    send(ecql_proto:query(StreamId, Query), State),
-    {reply, ok, established, State#state{requests = dict:store(StreamId, From, Reqs)}};
+established({query, Query}, From, State = #state{stream_id = StreamId, requests = Reqs}) ->
+    send(ecql_proto:query_frame(StreamId, Query), State),
+    {next_state, established, next_stream_id(State#state{requests = dict:store(StreamId, From, Reqs)})};
 
-established({query, Query, Values}, _From, State) ->
-    {reply, ok, established, State}.
+established({query, Query, Values}, From, State = #state{stream_id = StreamId, requests = Reqs}) ->
+    send(ecql_proto:query_frame(StreamId, Query, Values), State),
+    {next_state, established, next_stream_id(State#state{requests = dict:store(StreamId, From, Reqs)})};
+
+established({prepare, Query}, From, State = #state{stream_id = StreamId, requests = Reqs}) ->
+    send(ecql_proto:prepare_frame(StreamId, Query), State),
+    {next_state, established, next_stream_id(State#state{requests = dict:store(StreamId, From, Reqs)})}.
 
 disconnected(_Event, State) ->
     {next_state, state_name, State}.
@@ -230,11 +246,42 @@ reply(Call, Reply, Callers) ->
                     [Caller|Acc]
                 end, [], Callers).
 
+reply(Frame = ?RESULT_FRAME(void, _Any), State) ->
+    reply2(Frame#ecql_frame.stream, ok, State);
+
+reply(Frame = ?RESULT_FRAME(rows, Result = #ecql_rows_result{}), State) ->
+    reply2(Frame#ecql_frame.stream, {ok, ecql_result:rows(Result)}, State);
+
+reply(Frame = ?RESULT_FRAME(set_keyspace, #ecql_set_keyspace_result{keyspace = Keyspace}), State) ->
+    reply2(Frame#ecql_frame.stream, {ok, Keyspace}, State);
+
+reply(Frame = ?RESULT_FRAME(prepared, #ecql_prepared_result{id = Id}), State) ->
+    reply2(Frame#ecql_frame.stream, {ok, Id}, State);
+
+reply(Frame = ?RESULT_FRAME(schema_change, #ecql_schema_change_result{type = Type, target = Target}), State) ->
+    reply2(Frame#ecql_frame.stream, {ok, {Type, Target}}, State);
+
+reply(Frame = ?ERROR_FRAME(#ecql_error{message = Msg}), State) ->
+    reply2(Frame#ecql_frame.stream, {error, Msg}, State).
+
+reply2(StreamId, Reply, State = #state{requests = Reqs}) ->
+    case dict:find(StreamId, Reqs) of
+        {ok, From} -> gen_fsm:reply(From, Reply);
+        error      -> ignore
+    end,
+    State#state{requests = dict:erase(StreamId, Reqs)}.
+
 send(Frame, #state{socket = Sock}) ->
-    ecql_sock:send(Sock, ecql_frame:serialize(Frame)).
+    Data = ecql_frame:serialize(Frame),
+    io:format("SEND: ~p~n", [Data]),
+    ecql_sock:send(Sock, Data).
 
 next_stream_id(State = #state{stream_id = 16#ffff}) ->
     State#state{stream_id = 1};
 
 next_stream_id(State = #state{stream_id = Id }) ->
     State#state{stream_id = Id + 1}.
+
+bin(S) when is_list(S)   -> list_to_binary(S);
+bin(B) when is_binary(B) -> B.
+

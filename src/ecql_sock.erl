@@ -176,6 +176,7 @@ receiver_activate(ClientPid, Sock, ParserFun) ->
 receiver_loop(ClientPid, Sock, ParserFun) ->
     receive
         {tcp, Sock, Data} ->
+            io:format("RECV: ~p~n", [Data]),
             case parse_received_data(ClientPid, Data, ParserFun) of
                 {ok, NewParserFun} ->
                     receiver_activate(ClientPid, Sock, NewParserFun);
