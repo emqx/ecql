@@ -44,6 +44,21 @@
 
 -type opcode() :: ?OPCODE_ERROR..?OPCODE_AUTH_SUCCESS.
 
+%% [consistency] A consistency level specification.
+%% This is a [short] representing a consistency level with the following.
+
+-define(ANY,          16#00).
+-define(ONE,          16#01).
+-define(TWO,          16#02).
+-define(THREE,        16#03).
+-define(QUORUM,       16#04).
+-define(ALL,          16#05).
+-define(LOCAL_QUORUM, 16#06).
+-define(EACH_QUORUM,  16#07).
+-define(SERIAL,       16#08).
+-define(LOCAL_SERIAL, 16#09).
+-define(LOCAL_ONE,    16#0A).
+
 -define(record_to_proplist(Def, Rec),
         lists:zip(record_info(fields, Def),
                   tl(tuple_to_list(Rec)))).
@@ -65,7 +80,7 @@
 
 -record(ecql_options, {}).
 
--record(ecql_query_parameters, {consistency, flags, values, skip_metadata,
+-record(ecql_query_parameters, {consistency = ?ANY, flags, values, skip_metadata,
                                 result_page_size, paging_state, serial_consistency,
                                 timestamp}).
 

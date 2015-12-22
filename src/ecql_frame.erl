@@ -236,19 +236,19 @@ serialize_batch_query_values([H|_] = Values) when is_binary(H) ->
     << (length(Values)):?short, ValuesBin/binary>>.
     
 serialize_query_parameters(#ecql_query_parameters{consistency = Consistency,
-                                                 values = Values,
-                                                 skip_metadata = SkipMetadata,
-                                                 result_page_size = PageSize,
-                                                 paging_state = PagingState,
-                                                 serial_consistency = SerialConsistency,
-                                                 timestamp = Timestamp} = QueryParameters) ->
+                                                  values = Values,
+                                                  skip_metadata = SkipMetadata,
+                                                  result_page_size = PageSize,
+                                                  paging_state = PagingState,
+                                                  serial_consistency = SerialConsistency,
+                                                  timestamp = Timestamp} = QueryParameters) ->
     Flags = <<0:1, (flag(values, Values)):1, (flag(Timestamp)):1, (flag(SerialConsistency)):1,
               (flag(PagingState)):1, (flag(PageSize)):1, (flag(SkipMetadata)):1, (flag(Values)):1>>,
     [_H|Parameters] = ?record_to_proplist(ecql_query_parameters, QueryParameters),
 
     Bin = << <<(serialize_parameter(Name, Val))/binary>> || {Name, Val} <- Parameters, Val =/= undefined >>,
 
-    <<Consistency:?short, Flags:?byte, Bin/binary>>.
+    <<Consistency:?short, Flags/binary, Bin/binary>>.
 
 serialize_parameter(values, [H |_] = Vals) when is_tuple(H) ->
     Bin = << <<(serialize_string(Name))/binary, (serialize_bytes(Val))/binary>> || {Name, Val} <- Vals >>,
@@ -313,6 +313,7 @@ result_kind(set_keyspace)  -> 16#03;
 result_kind(prepared)      -> 16#04;
 result_kind(schema_change) -> 16#05.
 
+flag(values, undefined)                   -> 0;
 flag(values, [Val|_]) when is_binary(Val) -> 0;
 flag(values, [Val|_]) when is_tuple(Val)  -> 1.
 

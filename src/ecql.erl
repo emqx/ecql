@@ -34,7 +34,7 @@
 -import(proplists, [get_value/2, get_value/3]).
 
 %% API Function Exports
--export([start_link/1, start_link/2]).
+-export([start_link/1, start_link/2, query/2, query/3]).
 
 %% gen_fsm Function Exports
 -export([startup/2, startup/3, waiting_for_ready/2, waiting_for_ready/3,
@@ -89,6 +89,15 @@ connect(Pid, TcpOpts) ->
         ok             -> {ok, Pid};
         {error, Error} -> {error, Error}
     end.
+
+query(Pid, Query) ->
+    gen_fsm:sync_send_event(Pid, {query, bin(Query)}).
+
+query(Pid, Query, Values) ->
+    gen_fsm:sync_send_event(Pid, {query, bin(Query), Values}).
+
+bin(S) when is_list(S)   -> list_to_binary(S);
+bin(B) when is_binary(B) -> B.
 
 %% gen_fsm Function Definitions
 
@@ -156,10 +165,14 @@ waiting_for_auth(_Event, _From, StateData) ->
     {reply, {error, waiting_for_auth}, waiting_for_auth, StateData}.
 
 established(_Event, State) ->
-    {next_state, state_name, State}.
+    {next_state, established, State}.
 
-established(_Event, _From, State) ->
-    {reply, ok, state_name, State}.
+established({query, Query}, From, State= #state{stream_id = StreamId, requests = Reqs}) ->
+    send(ecql_proto:query(StreamId, Query), State),
+    {reply, ok, established, State#state{requests = dict:store(StreamId, From, Reqs)}};
+
+established({query, Query, Values}, _From, State) ->
+    {reply, ok, established, State}.
 
 disconnected(_Event, State) ->
     {next_state, state_name, State}.
@@ -181,6 +194,10 @@ handle_event(Event, StateName, State = #state{logger = Logger}) ->
 
 handle_sync_event(_Event, _From, StateName, State) ->
     {reply, ok, StateName, State}.
+
+handle_info(Frame, established, State) ->
+    io:format("~p~n", [Frame]),
+    {next_state, established, State};
 
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
