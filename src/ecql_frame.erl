@@ -41,7 +41,7 @@
 
 -include("ecql.hrl").
 
--include("ecql_frame.hrl").
+-include("ecql_types.hrl").
 
 -export([parser/0, serialize/1]).
 

@@ -1,5 +1,5 @@
 
--module(eqlc_frame_tests).
+-module(ecql_frame_tests).
 
 -ifdef(TEST).
 

@@ -26,8 +26,6 @@
 
 -module(ecql_sock).
 
--include("ecql_frame.hrl").
-
 %% API
 -export([connect/5, controlling_process/2, send/2, close/1, stop/1]).
 

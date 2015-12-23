@@ -29,7 +29,7 @@
 
 -include("ecql.hrl").
 
--include("ecql_frame.hrl").
+-include("ecql_types.hrl").
 
 -import(proplists, [get_value/2, get_value/3]).
 
