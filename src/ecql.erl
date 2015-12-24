@@ -95,7 +95,7 @@ query(Pid, Query) when is_binary(Query) ->
     query(Pid, Query, ?CL_ONE).
 
 query(Pid, Query, CL) when is_binary(Query) andalso is_atom(CL) ->
-    query(Pid, Query, cl(CL));
+    query(Pid, Query, ecql_cl:value(CL));
 
 query(Pid, Query, CL) when is_binary(Query) andalso ?IS_CL(CL) ->
     query(Pid, Query, CL, undefined).
@@ -108,18 +108,6 @@ prepare(Pid, Query) when is_list(Query) ->
 
 prepare(Pid, Query) when is_binary(Query) -> 
     gen_fsm:sync_send_event(Pid, {prepare, Query}).
-
-cl(any)          -> ?CL_ANY;
-cl(one)          -> ?CL_ONE;
-cl(two)          -> ?CL_TWO;
-cl(three)        -> ?CL_THREE;
-cl(quorum)       -> ?CL_QUORUM;
-cl(all)          -> ?CL_ALL;
-cl(local_quorum) -> ?CL_LOCAL_QUORUM;
-cl(each_quorum)  -> ?CL_EACH_QUORUM;
-cl(serial)       -> ?CL_SERIAL;
-cl(local_serial) -> ?CL_LOCAL_SERIAL;
-cl(local_one)    -> ?CL_LOCAL_ONE.
 
 %% gen_fsm Function Definitions
 

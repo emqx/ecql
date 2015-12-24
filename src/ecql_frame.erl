@@ -73,7 +73,7 @@ parse(<<>>, none) ->
 parse(Bin, none) when size(Bin) < ?HEADER_SIZE ->
     {more, fun(More) -> parse(<<Bin/binary, More/binary>>, none) end};
 
-parse(<<?VER_RESP:8, Flags:8, Stream:16, OpCode:8, Length:32, Bin/binary>>, none) ->
+parse(<<?VER_RESP:?byte, Flags:?byte, Stream:?short, OpCode:?byte, Length:?int, Bin/binary>>, none) ->
     parse_body(Bin, #ecql_frame{version = ?VER_RESP, flags = Flags,
                                 stream = Stream, opcode = OpCode,
                                 length = Length});
@@ -91,7 +91,7 @@ parse_body(Bin, Frame = #ecql_frame{length = Len}) ->
 parse_resp(#ecql_frame{opcode = ?OP_ERROR, body = Body}) ->
     <<Code:?int, Rest/binary>> = Body,
     {Message, Rest1} = parse_string(Rest),
-    parse_error(Rest1, #ecql_error{code = Code, message = Message});
+    parse_error(#ecql_error{code = Code, message = Message}, Rest1);
 
 parse_resp(#ecql_frame{opcode = ?OP_READY}) ->
     #ecql_ready{};
@@ -124,8 +124,38 @@ parse_resp(#ecql_frame{opcode = ?OP_AUTH_SUCCESS, body = Body}) ->
     {Token, _Rest} = parse_bytes(Body),
     #ecql_auth_success{token = Token}.
 
-parse_error(_Bin, Error = #ecql_error{code = Code}) ->
-    Error.
+parse_error(Error = #ecql_error{code = ?ERR_UNAVAILABE}, Bin) ->
+    <<Cl:?short, Required:?int, Alive:?int, _/binary>> = Bin,
+    Error#ecql_error{detail = [{consistency, Cl},
+                               {required, Required},
+                               {alive, Alive}]};
+
+parse_error(Error = #ecql_error{code = ?ERR_WRITE_TIMEOUT}, Bin) ->
+    <<Cl:?short, Received:?int, BlockFor:?int, Rest/binary>> = Bin,
+    {WriteType, _} = parse_string(Rest),
+    Error#ecql_error{detail = [{consistency, Cl},
+                               {received, Received},
+                               {blockfor, BlockFor},
+                               {write_type, WriteType}]};
+
+parse_error(Error = #ecql_error{code = ?ERR_READ_TIMEOUT}, Bin) ->
+    <<Cl:?short, Received:?int, BlockFor:?int, Present:8, _Rest/binary>> = Bin,
+    Error#ecql_error{detail = [{consistency, Cl},
+                               {received, Received},
+                               {blockfor, BlockFor},
+                               {data_present, Present}]};
+
+parse_error(Error = #ecql_error{code = ?ERR_ALREADY_EXISTS}, Bin) ->
+    {Ks, Rest} = parse_string(Bin),
+    {Table, _} = parse_string(Rest),
+    Error#ecql_error{detail = [{ks, Ks}, {table, Table}]};
+
+parse_error(Error = #ecql_error{code = ?ERR_UNPREPARED}, Bin) ->
+    {Id, _} = parse_short_bytes(Bin),
+    Error#ecql_error{detail = Id};
+
+parse_error(Error, Bin) -> %% default
+    Error#ecql_error{detail = Bin}.
 
 parse_event(EvenType = <<"TOPOLOGY_CHANGE">>, Bin)
         when   EvenType =:= <<"TOPOLOGY_CHANGE">>
@@ -392,10 +422,10 @@ serialize_req(#ecql_batch{type = Type, queries = Queries,
 serialize_req(#ecql_register{event_types = EventTypes}) ->
     serialize_string_list(EventTypes).
 
-serialize_batch_query(#ecql_batch_query{kind = 0, string_or_id = Str, values = Values}) ->
+serialize_batch_query(#ecql_batch_query{kind = 0, query_or_id = Str, values = Values}) ->
     <<0:?byte, (serialize_long_string(Str))/binary, (serialize_batch_query_values(Values))/binary>>;
 
-serialize_batch_query(#ecql_batch_query{kind = 1, string_or_id = Id, values = Values}) ->
+serialize_batch_query(#ecql_batch_query{kind = 1, query_or_id = Id, values = Values}) ->
     <<0:?byte, (serialize_short_bytes(Id))/binary, (serialize_batch_query_values(Values))/binary>>.
 
 serialize_batch_query_values([]) ->
