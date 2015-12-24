@@ -30,6 +30,6 @@
 
 -export([rows/1]).
 
-rows(#ecql_rows_result{meta = #ecql_rows_meta{columns = Columns,table_spec = TableSpec}, rows = Rows}) ->
+rows(#ecql_rows{meta = #ecql_rows_meta{columns = Columns, table_spec = TableSpec}, data = Rows}) ->
     {TableSpec, Columns, Rows}.
 

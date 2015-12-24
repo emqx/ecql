@@ -49,7 +49,11 @@
 -compile(export_all).
 -endif.
 
--define(HEADER_SIZE,    9).
+-define(record_to_proplist(Def, Rec),
+        lists:zip(record_info(fields, Def),
+                  tl(tuple_to_list(Rec)))).
+
+-define(HEADER_SIZE, 9).
 
 %% @doc Initialize a parser
 parser() ->
@@ -75,7 +79,7 @@ parse_body(Bin, Frame = #ecql_frame{length = Len}) when size(Bin) < Len ->
 parse_body(Bin, Frame = #ecql_frame{length = Len}) ->
     <<Body:Len/binary, Rest/binary>> = Bin,
     Resp = parse_resp(Frame#ecql_frame{body = Body}),
-    {ok, Frame#ecql_frame{resp = Resp}, Rest}.
+    {ok, Frame#ecql_frame{message = Resp}, Rest}.
 
 parse_resp(#ecql_frame{opcode = ?OP_ERROR, body = Body}) ->
     <<Code:?int, Rest/binary>> = Body,
@@ -98,10 +102,10 @@ parse_resp(#ecql_frame{opcode = ?OP_RESULT, body = Body}) ->
     parse_result(Bin, #ecql_result{kind = result_kind(Kind)});
 
 parse_resp(#ecql_frame{opcode = ?OP_EVENT, body = Body}) ->
-    %%TODO:...
     {EventType, Rest} = parse_string(Body),
-    #ecql_event{type = EventType};
-    
+    {EventData, _Rest} = parse_event(EventType, Rest),
+    #ecql_event{type = EventType, data = EventData};
+
 parse_resp(#ecql_frame{opcode = ?OP_AUTH_CHALLENGE, body = Body}) ->
     {Token, _Rest} = parse_bytes(Body),
     #ecql_auth_challenge{token = Token};
@@ -116,20 +120,46 @@ parse_resp(#ecql_frame{opcode = ?OP_AUTH_SUCCESS, body = Body}) ->
 parse_error(_Bin, Error = #ecql_error{code = Code}) ->
     Error.
 
+parse_event(EvenType = <<"TOPOLOGY_CHANGE">>, Bin)
+        when   EvenType =:= <<"TOPOLOGY_CHANGE">>
+        orelse EvenType =:= <<"STATUS_CHANGE">> ->
+    {Change, Rest} = parse_string(Bin),
+    {IpBytes, Rest2} = parse_bytes(Rest),
+    {Ip, _} = ecql_types:decode(inet, size(IpBytes), IpBytes),
+    {{Change, Ip}, Rest2};
+
+parse_event(<<"SCHEMA_CHANGE">>, Bin) ->
+    {ChangeType, Rest} = parse_string(Bin),
+    {Target, Rest1} = parse_string(Rest),
+    {Keyspace, Name, RestX} =
+    if Target == <<"KEYSPACE">> ->
+        {Ks, Rest2} = parse_string(Rest1),
+        {Ks, undefined, Rest2};
+       Target == <<"TABLE">> orelse Target == <<"TYPE">> ->
+        {Ks, Rest2} = parse_string(Rest1),
+        {N, Rest3} = parse_string(Rest2),
+        {Ks, N, Rest3};
+       true ->
+        {Rest1, <<>>}
+    end,
+    {{ChangeType, Target, Keyspace, Name}, RestX};
+
+parse_event(_EventType, Rest) ->
+    {Rest, <<>>}.
+
 parse_result(_Bin, Resp = #ecql_result{kind = void}) ->
     Resp;
 parse_result(Bin, Resp = #ecql_result{kind = rows}) ->
     {Meta, Rest}   = parse_rows_meta(Bin),
     {Rows, _Rest1} = parse_rows_content(Meta, Rest),
-    Resp#ecql_result{result = #ecql_rows_result{meta = Meta, rows = Rows}};
+    Resp#ecql_result{result = #ecql_rows{meta = Meta, data = Rows}};
 parse_result(Bin, Resp = #ecql_result{kind = set_keyspace}) ->
     {Keyspace, _Rest} = parse_string(Bin),
-    Result = #ecql_set_keyspace_result{keyspace = Keyspace},
+    Result = #ecql_set_keyspace{keyspace = Keyspace},
     Resp#ecql_result{result = Result};
 parse_result(Bin, Resp = #ecql_result{kind = prepared}) ->
     {Id, _Rest} = parse_short_bytes(Bin),
-    Result = #ecql_prepared_result{id = Id},
-    Resp#ecql_result{result = Result};
+    Resp#ecql_result{result = #ecql_prepared{id = Id}};
 
 parse_result(Bin, Resp = #ecql_result{kind = schema_change}) ->
     Resp#ecql_result{result = parse_schema_change(Bin)}.
@@ -138,7 +168,7 @@ parse_schema_change(Bin) ->
     {Type,    Rest}  = parse_string(Bin),
     {Target,  Rest1} = parse_string(Rest),
     {Options, _}     = parse_string(Rest1),
-    #ecql_schema_change_result{type = Type, target = Target, options = Options}.
+    #ecql_schema_change{type = Type, target = Target, options = Options}.
 
 parse_rows_meta(<<Flags:4/binary, Count:?int, Bin/binary>>) ->
     <<_Unused:29, NoMetadata:1, HashMorePages:1, GlobalTabSpec:1>> = Flags,
@@ -302,7 +332,7 @@ parse_short_bytes(<<Size:?short, Bin/binary>>) ->
 serialize(Frame) ->
     serialize(header, serialize(body, Frame)).
 
-serialize(body, Frame = #ecql_frame{req = Req}) ->
+serialize(body, Frame = #ecql_frame{message = Req}) ->
     Body = serialize_req(Req),
     Frame#ecql_frame{length = size(Body), body = Body};
     
@@ -325,14 +355,14 @@ serialize_req(#ecql_auth_response{token = Token}) ->
 serialize_req(#ecql_options{}) ->
     <<>>;
 
-serialize_req(#ecql_query{query = Query, parameters = Parameters}) ->
-    << (serialize_long_string(Query))/binary, (serialize_query_parameters(Parameters))/binary >>;
+serialize_req(Query = #ecql_query{query = CQL}) ->
+    << (serialize_long_string(CQL))/binary, (serialize_query_parameters(Query))/binary >>;
 
 serialize_req(#ecql_prepare{query = Query}) ->
     serialize_long_string(Query);
 
-serialize_req(#ecql_execute{id = Id, parameters = Parameters}) ->
-    << (serialize_short_bytes(Id))/binary, (serialize_query_parameters(Parameters))/binary >>;
+serialize_req(#ecql_execute{id = Id, query = Query}) ->
+    << (serialize_short_bytes(Id))/binary, (serialize_query_parameters(Query))/binary >>;
 
 serialize_req(#ecql_batch{type = Type, queries = Queries,
                           consistency = Consistency,
@@ -371,16 +401,17 @@ serialize_batch_query_values([H|_] = Values) when is_binary(H) ->
     ValuesBin = << <<(serialize_bytes(Val))/binary>> || Val <- Values >>,
     << (length(Values)):?short, ValuesBin/binary>>.
     
-serialize_query_parameters(#ecql_query_parameters{consistency = Consistency,
-                                                  values = Values,
-                                                  skip_metadata = SkipMetadata,
-                                                  result_page_size = PageSize,
-                                                  paging_state = PagingState,
-                                                  serial_consistency = SerialConsistency,
-                                                  timestamp = Timestamp} = QueryParameters) ->
+serialize_query_parameters(#ecql_query{consistency = Consistency,
+                                       values = Values,
+                                       skip_metadata = SkipMetadata,
+                                       result_page_size = PageSize,
+                                       paging_state = PagingState,
+                                       serial_consistency = SerialConsistency,
+                                       timestamp = Timestamp} = Query) ->
     Flags = <<0:1, (flag(values, Values)):1, (flag(Timestamp)):1, (flag(SerialConsistency)):1,
               (flag(PagingState)):1, (flag(PageSize)):1, (flag(SkipMetadata)):1, (flag(Values)):1>>,
-    [_H|Parameters] = ?record_to_proplist(ecql_query_parameters, QueryParameters),
+
+    [_Q, _C, _F|Parameters] = ?record_to_proplist(ecql_query, Query),
 
     Bin = << <<(serialize_parameter(Name, Val))/binary>> || {Name, Val} <- Parameters, Val =/= undefined >>,
 

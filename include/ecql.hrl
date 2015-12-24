@@ -20,6 +20,10 @@
 %%% SOFTWARE.
 %%%-----------------------------------------------------------------------------
 
+%%------------------------------------------------------------------------------
+%% Version
+%%------------------------------------------------------------------------------
+
 -define(VER_REQ,        16#03).
 -define(VER_RESP,       16#83).
 
@@ -63,6 +67,8 @@
 -define(CL_LOCAL_SERIAL, 16#09).
 -define(CL_LOCAL_ONE,    16#0A).
 
+-define(IS_CL(I), (?CL_ANY =< I andalso I =< ?CL_LOCAL_ONE)).
+
 -type consistency() :: ?CL_ANY..?CL_LOCAL_ONE.
 
 %%------------------------------------------------------------------------------
@@ -89,19 +95,35 @@
 %%------------------------------------------------------------------------------
 
 -record(ecql_frame, {version = ?VER_REQ, flags = 0, stream,
-                     opcode, length, body, req, resp}).
+                     opcode, length, body, message}).
 
--define(REQ_FRAME(OpCode, Resp), #ecql_frame{opcode = OpCode, req = Req}).
+-type stream_id() :: 0..16#FFFF.
 
--define(RESP_FRAME(OpCode, Resp), #ecql_frame{opcode = OpCode, resp = Resp}).
+-type ecql_frame() :: #ecql_frame{}.
 
--define(ERROR_FRAME(Error), #ecql_frame{opcode = ?OP_ERROR, resp = Error}).
+-define(REQ_FRAME(OpCode, Req),
+        #ecql_frame{version = ?VER_REQ, opcode = OpCode, message = Req}).
 
--define(RESULT_FRAME(Kind, Result), #ecql_frame{opcode = ?OP_RESULT,
-                                                resp = #ecql_result{kind = Kind, result = Result}}).
+-define(REQ_FRAME(Stream, OpCode, Req),
+        #ecql_frame{version = ?VER_REQ, stream = Stream,
+                    opcode = OpCode, message = Req}).
+
+-define(RESP_FRAME(OpCode, Resp),
+        #ecql_frame{version = ?VER_RESP, opcode = OpCode, message = Resp}).
+
+-define(RESP_FRAME(Stream, OpCode, Resp),
+        #ecql_frame{version = ?VER_RESP, stream = Stream,
+                    opcode = OpCode, message = Resp}).
+
+-define(ERROR_FRAME(Error),
+        #ecql_frame{version = ?VER_RESP, opcode = ?OP_ERROR, message = Error}).
+
+-define(RESULT_FRAME(Kind, Result),
+        #ecql_frame{version = ?VER_RESP, opcode = ?OP_RESULT,
+                    message = #ecql_result{kind = Kind, result = Result}}).
 
 %%------------------------------------------------------------------------------
-%% Request
+%% Request Message
 %%------------------------------------------------------------------------------
 
 -record(ecql_startup, {version = <<"3.0.0">>, compression}).
@@ -110,15 +132,14 @@
 
 -record(ecql_options, {}).
 
--record(ecql_query_parameters, {consistency = ?CL_ONE, flags, values, skip_metadata,
-                                result_page_size, paging_state, serial_consistency,
-                                timestamp}).
+-record(ecql_query, {query, consistency = ?CL_ONE, flags, values, skip_metadata,
+                     result_page_size, paging_state, serial_consistency, timestamp}).
 
--record(ecql_query, {query, parameters :: #ecql_query_parameters{}}).
+-type ecql_query() :: #ecql_query{}.
 
 -record(ecql_prepare, {query}).
 
--record(ecql_execute, {id, parameters}).
+-record(ecql_execute, {id, query = #ecql_query{}}).
 
 -record(ecql_batch_query, {kind, string_or_id, values}).
 
@@ -129,7 +150,7 @@
 -record(ecql_register, {event_types :: list(string())}).
 
 %%------------------------------------------------------------------------------
-%% Response
+%% Response Message
 %%------------------------------------------------------------------------------
 
 -record(ecql_error, {code, message}).
@@ -144,30 +165,21 @@
 
 -record(ecql_rows_meta, {count, columns, paging_state, table_spec}).
 
--record(ecql_rows_result, {meta :: #ecql_rows_meta{}, rows}).
+-record(ecql_rows, {meta :: #ecql_rows_meta{}, data :: list()}).
 
--record(ecql_set_keyspace_result, {keyspace}).
+-record(ecql_set_keyspace, {keyspace}).
 
--record(ecql_prepared_result, {id, metadata, result_metadata}).
+-record(ecql_prepared, {id, metadata, result_metadata}).
 
--record(ecql_schema_change_result, {type, target, options}).
+-record(ecql_schema_change, {type, target, options}).
 
--record(ecql_result, {kind :: ecql_result_kind(), result}).
+-record(ecql_result, {kind   :: ecql_result_kind(),
+                      result :: #ecql_rows{} | #ecql_set_keyspace{}
+                              | #ecql_prepared{} | #ecql_schema_change{}}).
 
--record(ecql_event, {type}).
+-record(ecql_event, {type, data}).
 
 -record(ecql_auth_challenge, {token}).
 
 -record(ecql_auth_success, {token}).
 
-%%------------------------------------------------------------------------------
-%% Record to proplists
-%%------------------------------------------------------------------------------
-
--define(record_to_proplist(Def, Rec),
-        lists:zip(record_info(fields, Def),
-                  tl(tuple_to_list(Rec)))).
-
--define(record_to_proplist(Def, Rec, Fields),
-    [{K, V} || {K, V} <- ?record_to_proplist(Def, Rec),
-                         lists:member(K, Fields)]).
