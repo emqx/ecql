@@ -103,8 +103,11 @@ query(Pid, Query, CL) when is_binary(Query) andalso ?IS_CL(CL) ->
 query(Pid, Query, CL, Values) when is_binary(Query) andalso ?IS_CL(CL) ->
     gen_fsm:sync_send_event(Pid, {query, #ecql_query{query = Query, consistency  = CL, values = Values}}).
 
-prepare(Pid, Query) -> 
-    gen_fsm:sync_send_event(Pid, {prepare, bin(Query)}).
+prepare(Pid, Query) when is_list(Query) -> 
+    prepare(Pid, list_to_binary(Query));
+
+prepare(Pid, Query) when is_binary(Query) -> 
+    gen_fsm:sync_send_event(Pid, {prepare, Query}).
 
 cl(any)          -> ?CL_ANY;
 cl(one)          -> ?CL_ONE;
@@ -122,6 +125,7 @@ cl(local_one)    -> ?CL_LOCAL_ONE.
 
 init([Opts]) ->
     process_flag(trap_exit, true),
+    random:seed(os:timestamp()),
     Nodes = get_value(nodes, Opts, [{"127.0.0.1", 9042}]),
     IsSSL = get_value(ssl, Opts, false),
     SslOpts = get_value(ssl_opts, Opts, []),
@@ -194,18 +198,20 @@ established(Frame = ?ERROR_FRAME(#ecql_error{}), State = #state{logger = Logger}
 established(_Event, State) ->
     {next_state, established, State}.
 
-established({query, Query}, From, State = #state{requests    = Reqs,
-                                                 proto_state = ProtoSate})
+established({query, Query}, From, State = #state{proto_state = ProtoSate})
         when is_record(Query, ecql_query) ->
-    {StreamId, NewProto} = ecql_proto:query(Query, ProtoSate),
-    Reqs1 = dict:store(StreamId, From, Reqs),
-    {next_state, established, State#state{requests    = Reqs1,
-                                          proto_state = NewProto}};
+    request(From, fun ecql_proto:query/2, [Query, ProtoSate], State);
 
-established({prepare, Query}, From, State = #state{requests = Reqs, proto_state = ProtoSate}) ->
-    {StreamId, NewProto} = ecql_proto:prepare(Query, ProtoSate),
-    {next_state, established, State#state{requests = dict:store(StreamId, From, Reqs),
-                                          proto_state = NewProto}}.
+established({prepare, Query}, From, State = #state{proto_state = ProtoSate}) ->
+    request(From, fun ecql_proto:prepare/2, [Query, ProtoSate], State);
+
+established(_Event, _From, State) ->
+    {reply, {error, unsupported}, established, State}.
+
+request(From, Fun, Args, State = #state{requests = Reqs}) ->
+    {Frame, ProtoState} = apply(Fun, Args),
+    {next_state, established, State#state{proto_state = ProtoState,
+            requests = dict:store(ecql_frame:stream(Frame), From, Reqs)}}.
 
 disconnected(_Event, State) ->
     {next_state, state_name, State}.
@@ -293,7 +299,4 @@ reply2(StreamId, Reply, State = #state{requests = Reqs}) ->
         error      -> ignore
     end,
     State#state{requests = dict:erase(StreamId, Reqs)}.
-
-bin(S) when is_list(S)   -> list_to_binary(S);
-bin(B) when is_binary(B) -> B.
 

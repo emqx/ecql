@@ -45,6 +45,8 @@
 
 -export([parser/0, serialize/1]).
 
+-export([stream/1]).
+
 -ifdef(TEST).
 -compile(export_all).
 -endif.
@@ -54,6 +56,10 @@
                   tl(tuple_to_list(Rec)))).
 
 -define(HEADER_SIZE, 9).
+
+-spec stream(ecql_frame()) -> stream_id().
+stream(#ecql_frame{stream = StreamId}) ->
+    StreamId.
 
 %% @doc Initialize a parser
 parser() ->
