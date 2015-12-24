@@ -27,12 +27,12 @@
 -module(ecql_sock).
 
 %% API
--export([connect/5, controlling_process/2, send/2, close/1, stop/1]).
+-export([connect/6, controlling_process/2, send/2, close/1, stop/1]).
 
 -export([sockname/1, sockname_s/1, setopts/2, getstat/2]).
 
 %% Internal export
--export([receiver/2, receiver_loop/3]).
+-export([receiver/3, receiver_loop/4]).
 
 %% 60 (secs)
 -define(TIMEOUT, 60000).
@@ -55,18 +55,19 @@
 -define(IS_SSL(Sock), is_record(Sock, ssl_socket)).
 
 %% @doc Connect to Cassandra with TCP or SSL transport
--spec connect(ClientPid, Transport, Host, Port, TcpOpts) -> {ok, Sock, Receiver} | {error, term()} when
+-spec connect(ClientPid, Transport, Host, Port, TcpOpts, Logger) -> {ok, Sock, Receiver} | {error, term()} when
     ClientPid :: pid(),
     Transport :: tcp | ssl,
     Host      :: inet:ip_address() | string(),
     Port      :: inet:port_number(),
     TcpOpts   :: [gen_tcp:connect_option()],
+    Logger    :: gen_logger:logmod(),
     Sock      :: inet:socket() | ssl_socket(),
     Receiver  :: pid().
-connect(ClientPid, Transport, Host, Port, TcpOpts) when is_pid(ClientPid) ->
+connect(ClientPid, Transport, Host, Port, TcpOpts, Logger) when is_pid(ClientPid) ->
     case connect(Transport, Host, Port, TcpOpts) of
         {ok, Sock} ->
-            ReceiverPid = spawn_link(?MODULE, receiver, [ClientPid, Sock]),
+            ReceiverPid = spawn_link(?MODULE, receiver, [ClientPid, Sock, Logger]),
             controlling_process(Sock, ReceiverPid),
             {ok, Sock, ReceiverPid};
         {error, Reason} ->
@@ -164,20 +165,20 @@ sockname_s(Sock) ->
     end.
 
 %%% Receiver Loop
-receiver(ClientPid, Sock) ->
-    receiver_activate(ClientPid, Sock, ecql_frame:parser()).
+receiver(ClientPid, Sock, Logger) ->
+    receiver_activate(ClientPid, Sock, ecql_frame:parser(), Logger).
 
-receiver_activate(ClientPid, Sock, ParserFun) ->
+receiver_activate(ClientPid, Sock, ParserFun, Logger) ->
     setopts(Sock, [{active, once}]),
-    erlang:hibernate(?MODULE, receiver_loop, [ClientPid, Sock, ParserFun]).
+    erlang:hibernate(?MODULE, receiver_loop, [ClientPid, Sock, ParserFun, Logger]).
 
-receiver_loop(ClientPid, Sock, ParserFun) ->
+receiver_loop(ClientPid, Sock, ParserFun, Logger) ->
     receive
         {tcp, Sock, Data} ->
-            io:format("RECV: ~p~n", [Data]),
+            Logger:debug("[ecql~p] RECV: ~p", [ClientPid, Data]),
             case parse_received_data(ClientPid, Data, ParserFun) of
                 {ok, NewParserFun} ->
-                    receiver_activate(ClientPid, Sock, NewParserFun);
+                    receiver_activate(ClientPid, Sock, NewParserFun, Logger);
                 {error, Error} ->
                     gen_fsm:send_all_state_event(ClientPid, {frame_error, Error})
             end;
@@ -188,7 +189,7 @@ receiver_loop(ClientPid, Sock, ParserFun) ->
         {ssl, _SslSock, Data} ->
             case parse_received_data(ClientPid, Data, ParserFun) of
                 {ok, NewParserFun} ->
-                    receiver_activate(ClientPid, Sock, NewParserFun);
+                    receiver_activate(ClientPid, Sock, NewParserFun, Logger);
                 {error, Error} ->
                     gen_fsm:send_all_state_event(ClientPid, {frame_error, Error})
             end;
