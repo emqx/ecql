@@ -24,6 +24,7 @@
 %% Version
 %%------------------------------------------------------------------------------
 
+-define(ECQL_VER,       <<"3.0.0">>).
 -define(VER_REQ,        16#03).
 -define(VER_RESP,       16#83).
 
@@ -90,14 +91,20 @@
 -define(ERR_ALREADY_EXISTS, 16#2400).
 -define(ERR_UNPREPARED,     16#2500).
 
+-type ecql_error_code() :: ?ERR_SERVER_ERROR..?ERR_UNPREPARED.
+
 %%------------------------------------------------------------------------------
 %% Frame
 %%------------------------------------------------------------------------------
 
--record(ecql_frame, {version = ?VER_REQ, flags = 0, stream,
-                     opcode, length, body, message}).
-
 -type stream_id() :: 0..16#FFFF.
+
+-record(ecql_frame, {version = ?VER_REQ, flags = 0,
+                     stream  :: stream_id(),
+                     opcode  :: opcode(),
+                     length  :: pos_integer(),
+                     body    :: binary(),
+                     message :: record()}).
 
 -type ecql_frame() :: #ecql_frame{}.
 
@@ -126,7 +133,8 @@
 %% Request Message
 %%------------------------------------------------------------------------------
 
--record(ecql_startup, {version = <<"3.0.0">>, compression}).
+-record(ecql_startup, {version = ?ECQL_VER,
+                       compression :: boolean()}).
 
 -record(ecql_auth_response, {token = <<>>}).
 
@@ -137,23 +145,25 @@
 
 -type ecql_query() :: #ecql_query{}.
 
--record(ecql_prepare, {query}).
+-record(ecql_prepare, {query :: binary()}).
 
--record(ecql_execute, {id, query = #ecql_query{}}).
+-record(ecql_execute, {id :: binary(), query :: ecql_query()}).
 
--record(ecql_batch_query, {kind, string_or_id, values}).
+-record(ecql_batch_query, {kind, query_or_id, values}).
 
 -record(ecql_batch, {type, queries :: [#ecql_batch_query{}],
                      consistency, flags, with_names :: boolean(),
                      serial_consistency, timestamp}).
 
--record(ecql_register, {event_types :: list(string())}).
+-record(ecql_register, {event_types :: [binary()]}).
 
 %%------------------------------------------------------------------------------
 %% Response Message
 %%------------------------------------------------------------------------------
 
--record(ecql_error, {code, message}).
+-record(ecql_error, {code    :: ecql_error_code(),
+                     message :: binary(),
+                     detail  :: any()}).
 
 -record(ecql_ready, {}).
 
@@ -177,9 +187,9 @@
                       result :: #ecql_rows{} | #ecql_set_keyspace{}
                               | #ecql_prepared{} | #ecql_schema_change{}}).
 
--record(ecql_event, {type, data}).
+-record(ecql_event, {type :: binary(), data :: binary()}).
 
--record(ecql_auth_challenge, {token}).
+-record(ecql_auth_challenge, {token :: binary()}).
 
--record(ecql_auth_success, {token}).
+-record(ecql_auth_success, {token :: binary()}).
 
