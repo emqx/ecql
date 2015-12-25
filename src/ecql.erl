@@ -23,6 +23,7 @@
 %%%
 %%% @author Feng Lee <feng@emqtt.io>
 %%%-----------------------------------------------------------------------------
+
 -module(ecql).
 
 -behaviour(gen_fsm).
@@ -34,7 +35,7 @@
 -import(proplists, [get_value/2, get_value/3]).
 
 %% API Function Exports
--export([start_link/1, start_link/2, query/2, query/3, prepare/2]).
+-export([start_link/1, start_link/2, options/1, query/2, query/3, prepare/2]).
 
 %% gen_fsm Function Exports
 -export([startup/2, startup/3, waiting_for_ready/2, waiting_for_ready/3,
@@ -46,11 +47,11 @@
 
 -type host() :: inet:ip_address() | inet:hostname().
 
--type option() :: {nodes, [{host(), inet:port_number()}]}
-                | {ssl,  boolean()}
+-type option() :: {nodes,    [{host(), inet:port_number()}]}
+                | {ssl,      boolean()}
                 | {ssl_opts, [ssl:ssl_option()]}
                 | {timeout,  timeout()}
-                | {logger, atom() | {atom(), atom()}}.
+                | {logger,   atom() | {atom(), atom()}}.
 
 -record(state, {nodes     :: [{host(), inet:port_number()}],
                 transport :: tcp | ssl,
@@ -68,6 +69,10 @@
 
 -define(LOG(Logger, Level, Format, Args),
         Logger:Level("[ecql~p] " ++ Format, [self() | Args])).
+
+-type cql_result() :: {TableSpec :: binary(),
+                       Columns   :: [tuple()],
+                       Rows      :: list()}.
 
 %% API Function Definitions
 
@@ -91,6 +96,11 @@ connect(Pid, TcpOpts) ->
         {error, Error} -> {error, Error}
     end.
 
+-spec options(pid()) -> {ok, list()} | {error, any()}.
+options(Pid) ->
+    gen_fsm:sync_send_all_state_event(Pid, options).
+
+-spec query(pid(), binary()) -> {ok, cql_result()} | {error, any()}.
 query(Pid, Query) when is_binary(Query) ->
     query(Pid, Query, ?CL_ONE).
 
@@ -218,6 +228,19 @@ handle_event({connection_lost, Reason}, _StateName, StateData = #state{logger = 
 handle_event(Event, StateName, State = #state{logger = Logger}) ->
     ?LOG(Logger, warning, "Unexpected Event when ~s: ~p", [StateName, Event]),
     {next_state, StateName, State}.
+
+handle_sync_event(options, From, StateName, State = #state{requests = Reqs,
+                                                           proto_state = ProtoState})
+        when StateName =:= established;
+             StateName =:= waiting_for_ready;
+             StateName =:= waiting_for_auth ->
+    {Frame, ProtoState1} = ecql_proto:options(ProtoState),
+    Reqs1 = dict:store(ecql_frame:stream(Frame), From, Reqs),
+    {next_state, StateName, State#state{proto_state = ProtoState1,
+                                        requests    = Reqs1}};
+
+handle_sync_event(options, _From, StateName, State) ->
+    {reply, {error, StateName}, StateName, State};
 
 handle_sync_event(_Event, _From, StateName, State) ->
     {reply, ok, StateName, State}.

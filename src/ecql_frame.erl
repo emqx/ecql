@@ -73,12 +73,13 @@ parse(<<>>, none) ->
 parse(Bin, none) when size(Bin) < ?HEADER_SIZE ->
     {more, fun(More) -> parse(<<Bin/binary, More/binary>>, none) end};
 
-parse(<<?VER_RESP:?byte, Flags:?byte, Stream:?short, OpCode:?byte, Length:?int, Bin/binary>>, none) ->
+parse(<<?VER_RESP:?byte, Flags:?byte, Stream:?short, OpCode:?byte, Length:32/big-integer, Bin/binary>>, none) ->
     parse_body(Bin, #ecql_frame{version = ?VER_RESP, flags = Flags,
                                 stream = Stream, opcode = OpCode,
                                 length = Length});
 
-parse(Bin, Cont) -> Cont(Bin).
+parse(Bin, Cont) ->
+    Cont(Bin).
 
 parse_body(Bin, Frame = #ecql_frame{length = Len}) when size(Bin) < Len ->
     {more, fun(More) -> parse_body(<<Bin/binary, More/binary>>, Frame) end};
@@ -126,21 +127,21 @@ parse_resp(#ecql_frame{opcode = ?OP_AUTH_SUCCESS, body = Body}) ->
 
 parse_error(Error = #ecql_error{code = ?ERR_UNAVAILABE}, Bin) ->
     <<Cl:?short, Required:?int, Alive:?int, _/binary>> = Bin,
-    Error#ecql_error{detail = [{consistency, Cl},
+    Error#ecql_error{detail = [{consistency, ecql_cl:name(Cl)},
                                {required, Required},
                                {alive, Alive}]};
 
 parse_error(Error = #ecql_error{code = ?ERR_WRITE_TIMEOUT}, Bin) ->
     <<Cl:?short, Received:?int, BlockFor:?int, Rest/binary>> = Bin,
     {WriteType, _} = parse_string(Rest),
-    Error#ecql_error{detail = [{consistency, Cl},
+    Error#ecql_error{detail = [{consistency, ecql_cl:name(Cl)},
                                {received, Received},
                                {blockfor, BlockFor},
                                {write_type, WriteType}]};
 
 parse_error(Error = #ecql_error{code = ?ERR_READ_TIMEOUT}, Bin) ->
     <<Cl:?short, Received:?int, BlockFor:?int, Present:8, _Rest/binary>> = Bin,
-    Error#ecql_error{detail = [{consistency, Cl},
+    Error#ecql_error{detail = [{consistency, ecql_cl:name(Cl)},
                                {received, Received},
                                {blockfor, BlockFor},
                                {data_present, Present}]};
