@@ -1,13 +1,17 @@
 
 %%------------------------------------------------------------------------------
-%% Common Type
+%% 3. Notations
+%%
+%% [int]          A 4 bytes signed integer
+%% [long]         A 8 bytes signed integer
+%% [short]        A 2 bytes unsigned integer
 %%------------------------------------------------------------------------------
--define(byte,   1/big-signed-unit:8).
--define(short,  1/big-signed-unit:16).
--define(int,    1/big-signed-unit:32).
--define(long,   1/big-signed-unit:64).
--define(float,  1/big-float-unit:32).
--define(double, 1/big-float-unit:64).
+-define(byte,   8/big-integer).
+-define(short,  16/big-integer).
+-define(int,    32/big-signed-integer).
+-define(long,   64/big-signed-integer).
+-define(float,  32/big-float).
+-define(double, 64/big-float).
 -define(uuid,   16/binary).
 
 %%------------------------------------------------------------------------------
