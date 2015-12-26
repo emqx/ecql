@@ -49,12 +49,16 @@
 -type host() :: inet:ip_address() | inet:hostname().
 
 -type option() :: {nodes,    [{host(), inet:port_number()}]}
+                | {username, binary()}
+                | {password, binary()}
                 | {ssl,      boolean()}
                 | {ssl_opts, [ssl:ssl_option()]}
                 | {timeout,  timeout()}
                 | {logger,   atom() | {atom(), atom()}}.
 
 -record(state, {nodes     :: [{host(), inet:port_number()}],
+                username  :: binary(),
+                password  :: binary(),
                 transport :: tcp | ssl,
                 socket    :: inet:socket(),
                 receiver  :: pid(),
@@ -70,6 +74,8 @@
 
 -define(LOG(Logger, Level, Format, Args),
         Logger:Level("[ecql~p] " ++ Format, [self() | Args])).
+
+-define(PASSWORD_AUTHENTICATOR, <<"org.apache.cassandra.auth.PasswordAuthenticator">>).
 
 -type cql_result() :: {TableSpec :: binary(),
                        Columns   :: [tuple()],
@@ -136,11 +142,15 @@ init([Opts]) ->
     process_flag(trap_exit, true),
     random:seed(os:timestamp()),
     Nodes = get_value(nodes, Opts, [{"127.0.0.1", 9042}]),
+    Username = bin(get_value(username, Opts)),
+    Password = bin(get_value(password, Opts)),
     IsSSL = get_value(ssl, Opts, false),
     SslOpts = get_value(ssl_opts, Opts, []),
     Transport = if IsSSL -> ssl; true -> tcp end,
     Logger = gen_logger:new(get_value(logger, Opts, {console, debug})),
     {ok, startup, #state{nodes     = Nodes,
+                         username  = Username,
+                         password  = Password,
                          callers   = [],
                          requests  = dict:new(),
                          ssl       = IsSSL,
@@ -163,33 +173,48 @@ startup({connect, TcpOpts}, From, State = #state{callers = Callers}) ->
     end.
 
 waiting_for_ready(?READY_FRAME, State = #state{callers = Callers}) ->
-    {next_state, established, State#state{
-            callers = reply(connect, ok, Callers)}};
+    {next_state, established, State#state{callers = reply(connect, ok, Callers)}};
 
 waiting_for_ready(?RESP_FRAME(?OP_ERROR, #ecql_error{message = Message}), State = #state{callers = Callers}) ->
-    reply(connect, {error, Message}, Callers),
-    {stop, ecql_error, State};
+    shutdown(ecql_error, State#state{callers = reply(connect, {error, Message}, Callers)});
 
-waiting_for_ready(?RESP_FRAME(?OP_AUTHENTICATE, #ecql_authenticate{class = Class}), State) ->
-    io:format("Auth Class: ~p~n", [Class]),
-    %%TODO: send auth_response and timeout
-    {next_state, wating_for_auth, State}.
+waiting_for_ready(?RESP_FRAME(StreamId, ?OP_AUTHENTICATE, #ecql_authenticate{class = ?PASSWORD_AUTHENTICATOR}),
+                  State = #state{username = Username, password = Password, proto_state = ProtoState}) ->
+    Token = auth_token(Username, Password),
+    {_Frame, NewProtoState} = ecql_proto:auth_response(StreamId, Token, ProtoState),
+    {next_state, waiting_for_auth, State#state{proto_state = NewProtoState}};
+
+waiting_for_ready(?RESP_FRAME(?OP_AUTHENTICATE, #ecql_authenticate{class = Class}),
+                  State = #state{callers = Callers}) ->
+    reply(connect, {error, {unsupported_auth_class, Class}}, Callers),
+    shutdown({auth_error, Class}, State);
+
+waiting_for_ready(_Event, State) ->
+    %%TODO:...
+    {next_state, waiting_for_ready, State}.
 
 waiting_for_ready(_Event, _From, State) ->
     {reply, {error, waiting_for_ready}, waiting_for_ready, State}.
 
-waiting_for_auth(?RESP_FRAME(?OP_AUTH_CHALLENGE, #ecql_auth_challenge{token = Token}), StateData) ->
-    io:format("Auth Challenge: ~p~n", [Token]),
-    {next_state, wating_for_auth, StateData};
+waiting_for_auth(?RESP_FRAME(?OP_AUTH_CHALLENGE, #ecql_auth_challenge{token = Token}),
+                 State = #state{callers = Callers, logger = Logger}) ->
+    ?LOG(Logger, error, "Auth Challenge: ~p", [Token]),
+    shutdown(password_error, State#state{callers = reply(connect, {error, password_error}, Callers)});
 
-waiting_for_auth(?RESP_FRAME(?OP_AUTH_SUCCESS, #ecql_auth_success{token = Token}), StateData) ->
-    io:format("Auth Success: ~p~n", [Token]),
-    %%TODO: return to caller...
-    {next_state, wating_for_auth, StateData};
+waiting_for_auth(?RESP_FRAME(?OP_AUTH_SUCCESS, #ecql_auth_success{token = Token}),
+                 State = #state{callers = Callers, logger = Logger}) ->
+    ?LOG(Logger, info, "Auth Success: ~p", [Token]),
+    {next_state, established, State#state{callers = reply(connect, ok, Callers)}};
 
-waiting_for_auth(?RESP_FRAME(?OP_ERROR, #ecql_error{message = Message}), StateData) ->
+waiting_for_auth(?RESP_FRAME(?OP_ERROR, #ecql_error{message = Message}),
+                 State = #state{callers = Callers}) ->
     io:format("Auth Error: ~p~n", [Message]),
-    {next_state, wating_for_auth, StateData}.
+    Callers1 = reply(connect, {error, {auth_failed, Message}}, Callers),
+    shutdown(auth_error, State#state{callers = Callers1});
+
+waiting_for_auth(_Event, State) ->
+    %TODO:...
+    {next_state, waiting_for_auth, State}.
 
 waiting_for_auth(_Event, _From, StateData) ->
     {reply, {error, waiting_for_auth}, waiting_for_auth, StateData}.
@@ -330,4 +355,15 @@ response(StreamId, Response, State = #state{requests = Reqs}) ->
 
 shutdown(Reason, State) ->
     {stop, {shutdown, Reason}, State}.
+
+auth_token(undefined, undefined) ->
+    <<0, 0>>;
+auth_token(Username, undefined) ->
+    <<0, Username/binary, 0>>;
+auth_token(Username, Password) ->
+    <<0, Username/binary, 0, Password/binary>>.
+
+bin(undefined)           -> undefined;
+bin(S) when is_list(S)   -> list_to_binary(S);
+bin(B) when is_binary(B) -> B.
 
