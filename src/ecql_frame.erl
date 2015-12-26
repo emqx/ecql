@@ -380,7 +380,7 @@ serialize(header, #ecql_frame{version = Version,
                               opcode  = OpCode,
                               length  = Length,
                               body    = Body}) ->
-    <<Version:8, Flags:8, Stream:16, OpCode:8, Length:32, Body/binary>>.
+    <<Version:?byte, Flags:?byte, Stream:?short, OpCode:?byte, Length:32/big-integer, Body/binary>>.
 
 serialize_req(#ecql_startup{version = Ver, compression = undefined}) ->
     serialize_string_map([{<<"CQL_VERSION">>, Ver}]);
@@ -499,8 +499,8 @@ serialize_long_string(S) ->
 serialize_short_bytes(Bytes) ->
     <<(size(Bytes)):?short, Bytes/binary>>.
 
-serialize_bytes(Bytes) ->
-    <<(size(Bytes)):?int, Bytes/binary>>.
+serialize_bytes(Bin) ->
+    ecql_types:to_bytes(Bin).
 
 serialize_option_list(Options) ->
     Bin = << <<(serialize_option(Opt))/binary>> || Opt <- Options >>,

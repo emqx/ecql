@@ -28,7 +28,7 @@
 
 -include("ecql_types.hrl").
 
--export([name/1, value/1, encode/2, decode/3]).
+-export([name/1, value/1, encode/2, decode/3, to_bytes/1, from_bytes/1]).
 
 %%------------------------------------------------------------------------------
 %% Type Name
@@ -120,14 +120,14 @@ encode(int, Int) ->
     <<Int:?int>>;
 
 encode({list, ElType}, List) ->
-    Encode = fun(El) -> encode(bytes, encode(ElType, El)) end,
+    Encode = fun(El) -> to_bytes(encode(ElType, El)) end,
     ListBin = << <<(Encode(El))/binary>> || El <- List >>,
     <<(length(List)):?int, ListBin/binary>>;
 
 encode({map, {KType, VType}}, Map) ->
     Encode = fun(Key, Val) ->
-            KeyBin = encode(bytes, encode(KType, Key)),
-            ValBin = encode(bytes, encode(VType, Val)),
+            KeyBin = to_bytes(encode(KType, Key)),
+            ValBin = to_bytes(encode(VType, Val)),
             <<KeyBin/binary, ValBin/binary>>
     end,
     MapBin = << <<(Encode(Key, Val))/binary>> || {Key, Val} <- Map >>,
@@ -163,11 +163,11 @@ encode(timeuuid, UUID) ->
 
 encode({tuple, Types}, Tuple) ->
     L = lists:zip(tuple_to_list(Types), tuple_to_list(Tuple)),
-    Encode = fun(Type, El) -> encode(bytes, encode(Type, El)) end,
-    << <<(Encode(Type, El))/binary>> || {Type, El} <- L >>;
+    Encode = fun(Type, El) -> to_bytes(encode(Type, El)) end,
+    << <<(Encode(Type, El))/binary>> || {Type, El} <- L >>.
 
-encode(bytes, Bin) ->
-    << (size(Bin)):?int, Bin/binary >>.
+to_bytes(Bin) ->
+    <<(size(Bin)):?int, Bin/binary>>.
 
 %%------------------------------------------------------------------------------
 %% Decode
@@ -252,10 +252,8 @@ decode({tuple, ElTypes}, Size, Bin) ->
     Elements = [{ElSize, ElBin} || <<ElSize:?int, ElBin:ElSize/binary>> <= TupleBin],
     List = [decode(ElType, ElSize, ElBin) || {ElType, {ElSize, ElBin}}
                                              <- lists:zip(tuple_to_list(ElTypes), Elements)],
-    {list_to_tuple([El || {El, _} <- List]), Rest};
+    {list_to_tuple([El || {El, _} <- List]), Rest}.
 
-decode(bytes, Size, Bin) ->
-    <<BytesBin:Size/binary, Rest/binary>> = Bin,
-    <<Size:?int, Bytes:Size/binary>> = BytesBin,
-    {Bytes, Rest}.
+from_bytes(<<Size:?int, Bin:Size/binary, Rest/binary>>) ->
+    {Bin, Rest}.
 

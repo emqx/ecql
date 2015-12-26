@@ -35,7 +35,8 @@
 -import(proplists, [get_value/2, get_value/3]).
 
 %% API Function Exports
--export([start_link/1, start_link/2, options/1, query/2, query/3, prepare/2]).
+-export([start_link/1, start_link/2, options/1, query/2, query/3,
+         prepare/2, execute/3, execute/4]).
 
 %% gen_fsm Function Exports
 -export([startup/2, startup/3, waiting_for_ready/2, waiting_for_ready/3,
@@ -119,6 +120,16 @@ prepare(Pid, Query) when is_list(Query) ->
 prepare(Pid, Query) when is_binary(Query) -> 
     gen_fsm:sync_send_event(Pid, {prepare, Query}).
 
+execute(C, Id, CL) when is_binary(Id) andalso ?IS_CL(CL) ->
+    execute(C, Id, #ecql_query{consistency = ecql_cl:value(CL)});
+
+execute(C, Id, Query) when is_binary(Id), is_record(Query, ecql_query) ->
+    gen_fsm:sync_send_event(C, {execute, Id, Query}).
+
+execute(C, Id, CL, Values) when is_binary(Id) andalso ?IS_CL(CL) ->
+    execute(C, Id, #ecql_query{consistency = ecql_cl:value(CL),
+                               values = Values}).
+
 %% gen_fsm Function Definitions
 
 init([Opts]) ->
@@ -151,7 +162,7 @@ startup({connect, TcpOpts}, From, State = #state{callers = Callers}) ->
             {stop, Error, Error, State}
     end.
 
-waiting_for_ready(?RESP_FRAME(?OP_READY, #ecql_ready{}), State = #state{callers = Callers}) ->
+waiting_for_ready(?READY_FRAME, State = #state{callers = Callers}) ->
     {next_state, established, State#state{
             callers = reply(connect, ok, Callers)}};
 
@@ -183,15 +194,11 @@ waiting_for_auth(?RESP_FRAME(?OP_ERROR, #ecql_error{message = Message}), StateDa
 waiting_for_auth(_Event, _From, StateData) ->
     {reply, {error, waiting_for_auth}, waiting_for_auth, StateData}.
 
-established(Frame = ?RESULT_FRAME(_Kind, Result), State = #state{logger = Logger}) ->
-    ?LOG(Logger, info, "~p", [Result]),
-    NewState = reply(Frame, State),
-    {next_state, established, NewState};
-
-established(Frame = ?ERROR_FRAME(#ecql_error{}), State = #state{logger = Logger}) ->
-    ?LOG(Logger, error, "~p", [Frame]),
-    NewState = reply(Frame, State),
-    {next_state, established, NewState};
+established(Frame, State = #state{logger = Logger})
+        when is_record(Frame, ecql_frame) ->
+    ?LOG(Logger, info, "Frame ~p", [Frame]),
+    NewState = received(Frame, State),
+    {next_state, established, NewState, hibernate};
 
 established(_Event, State) ->
     {next_state, established, State}.
@@ -202,6 +209,9 @@ established({query, Query}, From, State = #state{proto_state = ProtoSate})
 
 established({prepare, Query}, From, State = #state{proto_state = ProtoSate}) ->
     request(From, fun ecql_proto:prepare/2, [Query, ProtoSate], State);
+
+established({execute, Id, Query}, From, State = #state{proto_state = ProtoSate}) ->
+    request(From, fun ecql_proto:execute/3, [Id, Query, ProtoSate], State);
 
 established(_Event, _From, State) ->
     {reply, {error, unsupported}, established, State}.
@@ -219,11 +229,11 @@ disconnected(_Event, _From, State) ->
 
 handle_event({frame_error, Error}, _StateName, State = #state{logger = Logger}) ->
     ?LOG(Logger, error, "Frame Error: ~p", [Error]),
-    {stop, {shutdown, {frame_error, Error}}, State};
+    shutdown({frame_error, Error}, State);
 
-handle_event({connection_lost, Reason}, _StateName, StateData = #state{logger = Logger}) -> 
+handle_event({connection_lost, Reason}, _StateName, State= #state{logger = Logger}) ->
     ?LOG(Logger, warning, "Connection lost for: ~p", [Reason]),
-    {next_state, disconnected, StateData#state{socket = undefined, receiver = undefined}};
+     shutdown(Reason, State#state{socket = undefined, receiver = undefined});
 
 handle_event(Event, StateName, State = #state{logger = Logger}) ->
     ?LOG(Logger, warning, "Unexpected Event when ~s: ~p", [StateName, Event]),
@@ -286,28 +296,38 @@ reply(Call, Reply, Callers) ->
                     [Caller|Acc]
                 end, [], Callers).
 
-reply(Frame = ?RESULT_FRAME(void, _Any), State) ->
-    reply2(Frame#ecql_frame.stream, ok, State);
+received(Frame = ?ERROR_FRAME(#ecql_error{code = Code, message = Message}), State) ->
+    response(ecql_frame:stream(Frame), {error, {Code, Message}}, State);
 
-reply(Frame = ?RESULT_FRAME(rows, Result = #ecql_rows{}), State) ->
-    reply2(Frame#ecql_frame.stream, {ok, ecql_result:rows(Result)}, State);
+received(Frame = ?SUPPORTED_FRAME(Options), State) ->
+    response(ecql_frame:stream(Frame), {ok, Options}, State);
 
-reply(Frame = ?RESULT_FRAME(set_keyspace, #ecql_set_keyspace{keyspace = Keyspace}), State) ->
-    reply2(Frame#ecql_frame.stream, {ok, Keyspace}, State);
+received(Frame = ?RESULT_FRAME(void, _Any), State) ->
+    response(ecql_frame:stream(Frame), ok, State);
 
-reply(Frame = ?RESULT_FRAME(prepared, #ecql_prepared{id = Id}), State) ->
-    reply2(Frame#ecql_frame.stream, {ok, Id}, State);
+received(Frame = ?RESULT_FRAME(rows, #ecql_rows{meta = Meta, data = Rows}), State) ->
+    #ecql_rows_meta{columns = Columns, table_spec = TableSpec} = Meta,
+    response(ecql_frame:stream(Frame), {ok, {TableSpec, Columns, Rows}}, State);
 
-reply(Frame = ?RESULT_FRAME(schema_change, #ecql_schema_change{type = Type, target = Target}), State) ->
-    reply2(Frame#ecql_frame.stream, {ok, {Type, Target}}, State);
+received(Frame = ?RESULT_FRAME(set_keyspace, #ecql_set_keyspace{keyspace = Keyspace}), State) ->
+    response(ecql_frame:stream(Frame), {ok, Keyspace}, State);
 
-reply(Frame = ?ERROR_FRAME(#ecql_error{message = Msg}), State) ->
-    reply2(Frame#ecql_frame.stream, {error, Msg}, State).
+received(Frame = ?RESULT_FRAME(prepared, #ecql_prepared{id = Id}), State) ->
+    response(ecql_frame:stream(Frame), {ok, Id}, State);
 
-reply2(StreamId, Reply, State = #state{requests = Reqs}) ->
+received(Frame = ?RESULT_FRAME(schema_change, #ecql_schema_change{type = Type, target = Target, options = Options}), State) ->
+    response(ecql_frame:stream(Frame), {ok, {Type, Target, Options}}, State);
+
+received(Frame = ?RESULT_FRAME(_OpCode, Resp), State) ->
+    response(ecql_frame:stream(Frame), {ok, Resp}, State).
+
+response(StreamId, Response, State = #state{requests = Reqs}) ->
     case dict:find(StreamId, Reqs) of
-        {ok, From} -> gen_fsm:reply(From, Reply);
-        error      -> ignore
-    end,
-    State#state{requests = dict:erase(StreamId, Reqs)}.
+        {ok, From} -> gen_fsm:reply(From, Response),
+                      State#state{requests = dict:erase(StreamId, Reqs)};
+        error      -> State
+    end.
+
+shutdown(Reason, State) ->
+    {stop, {shutdown, Reason}, State}.
 

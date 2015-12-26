@@ -68,7 +68,7 @@
 -define(CL_LOCAL_SERIAL, 16#09).
 -define(CL_LOCAL_ONE,    16#0A).
 
--define(IS_CL(I), (?CL_ANY =< I andalso I =< ?CL_LOCAL_ONE)).
+-define(IS_CL(I), (is_atom(I) orelse (?CL_ANY =< I andalso I =< ?CL_LOCAL_ONE))).
 
 -type consistency() :: ?CL_ANY..?CL_LOCAL_ONE.
 
@@ -124,6 +124,12 @@
 
 -define(ERROR_FRAME(Error),
         #ecql_frame{version = ?VER_RESP, opcode = ?OP_ERROR, message = Error}).
+
+-define(READY_FRAME,
+        #ecql_frame{version = ?VER_RESP, opcode = ?OP_READY, message = #ecql_ready{}}).
+
+-define(SUPPORTED_FRAME(Options), #ecql_frame{version = ?VER_RESP, opcode = ?OP_SUPPORTED,
+                                              message = #ecql_supported{options = Options}}).
 
 -define(RESULT_FRAME(Kind, Result),
         #ecql_frame{version = ?VER_RESP, opcode = ?OP_RESULT,
