@@ -32,11 +32,13 @@
 
 -include("ecql_types.hrl").
 
--import(proplists, [get_value/2, get_value/3]).
-
 %% API Function Exports
--export([start_link/1, start_link/2, options/1, query/2, query/3,
-         prepare/2, execute/2, execute/3, execute/4]).
+-export([start_link/0, start_link/1, options/1,
+         query/2, query/3, query/4,
+         async_query/2, async_query/3, async_query/4,
+         prepare/2, execute/2, execute/3, execute/4,
+         async_execute/2, async_execute/3, async_execute/4,
+         stop/1]).
 
 %% gen_fsm Function Exports
 -export([startup/2, startup/3, waiting_for_ready/2, waiting_for_ready/3,
@@ -77,28 +79,27 @@
 
 -define(PASSWORD_AUTHENTICATOR, <<"org.apache.cassandra.auth.PasswordAuthenticator">>).
 
--type cql_result() :: {TableSpec :: binary(),
-                       Columns   :: [tuple()],
-                       Rows      :: list()}.
+-type cql_result() :: Keyspace :: binary()
+                    | {TableSpec :: binary(), Columns :: [tuple()], Rows :: list()}
+                    | {Type :: binary(), Target :: binary(), Options :: any()}.
+
+-export_type([cql_result/0]).
 
 %% API Function Definitions
 
+-spec start_link() -> {ok, pid()} | {error, any()}.
+start_link() ->
+    start_link([]).
+
 -spec start_link([option()]) -> {ok, pid()} | {error, any()}.
 start_link(Opts) ->
-    start_link(Opts, []).
-
--spec start_link([option()], [gen_tcp:connect_option()])
-        -> {ok, pid()} | {error, any()}.
-start_link(Opts, TcpOpts) ->
     case gen_fsm:start_link(?MODULE, [Opts], []) of
-        {ok, CPid} ->
-            connect(CPid, TcpOpts);
-        {error, Error} ->
-            {error, Error}
+        {ok, CPid}     -> connect(CPid);
+        {error, Error} -> {error, Error}
     end.
 
-connect(CPid, TcpOpts) ->
-    case gen_fsm:sync_send_event(CPid, {connect, TcpOpts}) of
+connect(CPid) ->
+    case gen_fsm:sync_send_event(CPid, connect) of
         ok             -> {ok, CPid};
         {error, Error} -> {error, Error}
     end.
@@ -109,7 +110,7 @@ options(CPid) ->
 
 -spec query(pid(), binary()) -> {ok, cql_result()} | {error, any()}.
 query(CPid, Query) when is_binary(Query) ->
-    query(CPid, Query, one).
+    gen_fsm:sync_send_event(CPid, {query, #ecql_query{query = Query}}).
 
 -spec query(pid(), binary(), list()) -> {ok, cql_result()} | {error, any()}.
 query(CPid, Query, Values) when is_binary(Query) andalso is_list(Values) ->
@@ -117,49 +118,94 @@ query(CPid, Query, Values) when is_binary(Query) andalso is_list(Values) ->
 
 -spec query(pid(), binary(), list(), atom()) -> {ok, cql_result()} | {error, any()}.
 query(CPid, Query, Values, CL) when is_binary(Query) andalso is_atom(CL) ->
-    gen_fsm:sync_send_event(CPid,{query, #ecql_query{query = Query, consistency = ecql_cl:value(CL), values = Values}}).
+    QObj = #ecql_query{query = Query, consistency = ecql_cl:value(CL), values = Values},
+    gen_fsm:sync_send_event(CPid,{query, QObj}).
 
+-spec async_query(pid(), binary()) -> {ok, reference()} | {error, any()}.
+async_query(CPid, Query) when is_binary(Query) ->
+    gen_fsm:sync_send_event(CPid, {async_query, #ecql_query{query = Query}}).
+
+-spec async_query(pid(), binary(), list()) -> {ok, reference()} | {error, any()}.
+async_query(CPid, Query, Values) when is_binary(Query) ->
+    async_query(CPid, Query, Values, one).
+
+-spec async_query(pid(), binary(), list(), atom()) -> {ok, reference()} | {error, any()}.
+async_query(CPid, Query, Values, CL) when is_binary(Query) andalso is_atom(CL) ->
+    QObj = #ecql_query{query = Query, consistency = ecql_cl:value(CL), values = Values},
+    gen_fsm:sync_send_event(CPid,{async_query, QObj}).
+
+-spec prepare(pid(), binary()) -> {ok, binary()} | {error, any()}.
 prepare(CPid, Query) when is_binary(Query) ->
     gen_fsm:sync_send_event(CPid, {prepare, Query}).
 
+-spec execute(pid(), binary()) -> {ok, cql_result()} | {error, any()}.
 execute(CPid, Id) when is_binary(Id) ->
-    execute(CPid, Id, #ecql_query{}).
+    gen_fsm:sync_send_event(CPid, {execute, Id, #ecql_query{}}).
 
+-spec execute(pid(), binary(), list()) -> {ok, cql_result()} | {error, any()}.
 execute(CPid, Id, Values) when is_binary(Id) andalso is_list(Values) ->
     execute(CPid, Id, Values, one).
 
+-spec execute(pid(), binary(), list(), atom()) -> {ok, cql_result()} | {error, any()}.
 execute(CPid, Id, Values, CL) when is_binary(Id) andalso is_atom(CL) ->
-    Query = #ecql_query{consistency = ecql_cl:value(CL), values = Values},
-    gen_fsm:sync_send_event(CPid, {execute, Id, Query}).
+    QObj = #ecql_query{consistency = ecql_cl:value(CL), values = Values},
+    gen_fsm:sync_send_event(CPid, {execute, Id, QObj}).
+
+-spec async_execute(pid(), binary()) -> {ok, reference()} | {error, any()}.
+async_execute(CPid, Id) when is_binary(Id) ->
+    gen_fsm:sync_send_event(CPid, {async_execute, Id, #ecql_query{}}).
+
+-spec async_execute(pid(), binary(), list()) -> {ok, reference()} | {error, any()}.
+async_execute(CPid, Id, Values) when is_binary(Id) andalso is_list(Values) ->
+    async_execute(CPid, Id, Values, one).
+
+-spec async_execute(pid(), binary(), list(), atom()) -> {ok, reference()} | {error, any()}.
+async_execute(CPid, Id, Values, CL) when is_binary(Id) andalso is_atom(CL) ->
+    QObj = #ecql_query{consistency = ecql_cl:value(CL), values = Values},
+    gen_fsm:sync_send_event(CPid, {async_execute, Id, QObj}).
+
+stop(CPid) ->
+    gen_fsm:sync_send_all_state_event(CPid, stop).
 
 %% gen_fsm Function Definitions
 
 init([Opts]) ->
-    process_flag(trap_exit, true),
     random:seed(os:timestamp()),
-    Nodes = get_value(nodes, Opts, [{"127.0.0.1", 9042}]),
-    Username = bin(get_value(username, Opts)),
-    Password = bin(get_value(password, Opts)),
-    IsSSL = get_value(ssl, Opts, false),
-    SslOpts = get_value(ssl_opts, Opts, []),
-    Transport = if IsSSL -> ssl; true -> tcp end,
-    Logger = gen_logger:new(get_value(logger, Opts, {console, debug})),
-    {ok, startup, #state{nodes     = Nodes,
-                         username  = Username,
-                         password  = Password,
-                         callers   = [],
-                         requests  = dict:new(),
-                         ssl       = IsSSL,
-                         ssl_opts  = SslOpts,
-                         transport = Transport,
-                         logger    = Logger}}.
+    State = #state{nodes     = [{"127.0.0.1", 9042}],
+                   callers   = [],
+                   requests  = dict:new(),
+                   transport = tcp,
+                   tcp_opts  = [],
+                   ssl_opts  = [],
+                   logger    = gen_logger:new({console, debug})},
+    {ok, startup, init_opt(Opts, State)}.
 
-startup(Event, StateData = #state{logger = Logger}) ->
+init_opt([], State) ->
+    State;
+init_opt([{nodes, Nodes} | Opts], State) ->
+    init_opt(Opts, State#state{nodes = Nodes});
+init_opt([{username, Username}| Opts], State) ->
+    init_opt(Opts, State#state{username = bin(Username)});
+init_opt([{password, Password}| Opts], State) ->
+    init_opt(Opts, State#state{password = bin(Password)});
+init_opt([ssl | Opts], State) ->
+    ssl:start(), % ok?
+    init_opt(Opts, State#state{transport = ssl});
+init_opt([{tcp_opts, TcpOpts} | Opts], State) ->
+    init_opt(Opts, State#state{tcp_opts = TcpOpts});
+init_opt([{ssl_opts, SslOpts} | Opts], State) ->
+    init_opt(Opts, State#state{ssl_opts = SslOpts});
+init_opt([{logger, Cfg} | Opts], State) ->
+    init_opt(Opts, State#state{logger = gen_logger:new(Cfg)});
+init_opt([Opt | _Opts], _State) ->
+    throw({badopt, Opt}).
+
+startup(Event, State = #state{logger = Logger}) ->
     Logger:error("[startup]: Unexpected Event: ~p", [Event]),
-    {next_state, startup, StateData}.
+    {next_state, startup, State}.
 
-startup({connect, TcpOpts}, From, State = #state{callers = Callers}) ->
-    case connect_cassa(State#state{tcp_opts = TcpOpts}) of
+startup(connect, From, State = #state{callers = Callers}) ->
+    case connect_cassa(State) of
         {ok, NewState = #state{proto_state = ProtoState}} ->
             {_, NewProto} = ecql_proto:startup(ProtoState),
             {next_state, waiting_for_ready, NewState#state{
@@ -169,25 +215,25 @@ startup({connect, TcpOpts}, From, State = #state{callers = Callers}) ->
     end.
 
 waiting_for_ready(?READY_FRAME, State = #state{callers = Callers}) ->
-    {next_state, established, State#state{callers = reply(connect, ok, Callers)}};
+    next_state(established, State#state{callers = reply(connect, ok, Callers)});
 
-waiting_for_ready(?RESP_FRAME(?OP_ERROR, #ecql_error{message = Message}), State = #state{callers = Callers}) ->
-    shutdown(ecql_error, State#state{callers = reply(connect, {error, Message}, Callers)});
+waiting_for_ready(?RESP_FRAME(?OP_ERROR, #ecql_error{code = Code, message = Message}), State = #state{callers = Callers}) ->
+    shutdown(ecql_error, State#state{callers = reply(connect, {error, {Code, Message}}, Callers)});
 
 waiting_for_ready(?RESP_FRAME(StreamId, ?OP_AUTHENTICATE, #ecql_authenticate{class = ?PASSWORD_AUTHENTICATOR}),
                   State = #state{username = Username, password = Password, proto_state = ProtoState}) ->
     Token = auth_token(Username, Password),
     {_Frame, NewProtoState} = ecql_proto:auth_response(StreamId, Token, ProtoState),
-    {next_state, waiting_for_auth, State#state{proto_state = NewProtoState}};
+    next_state(waiting_for_auth, State#state{proto_state = NewProtoState});
 
 waiting_for_ready(?RESP_FRAME(?OP_AUTHENTICATE, #ecql_authenticate{class = Class}),
                   State = #state{callers = Callers}) ->
     reply(connect, {error, {unsupported_auth_class, Class}}, Callers),
     shutdown({auth_error, Class}, State);
 
-waiting_for_ready(_Event, State) ->
-    %%TODO:...
-    {next_state, waiting_for_ready, State}.
+waiting_for_ready(Event, State = #state{logger = Logger}) ->
+    ?LOG(Logger, error, "Uexpected Event(waiting_for_ready): ~p", [Event]),
+    next_state(waiting_for_ready, State).
 
 waiting_for_ready(_Event, _From, State) ->
     {reply, {error, waiting_for_ready}, waiting_for_ready, State}.
@@ -200,39 +246,50 @@ waiting_for_auth(?RESP_FRAME(?OP_AUTH_CHALLENGE, #ecql_auth_challenge{token = To
 waiting_for_auth(?RESP_FRAME(?OP_AUTH_SUCCESS, #ecql_auth_success{token = Token}),
                  State = #state{callers = Callers, logger = Logger}) ->
     ?LOG(Logger, info, "Auth Success: ~p", [Token]),
-    {next_state, established, State#state{callers = reply(connect, ok, Callers)}};
+    next_state(established, State#state{callers = reply(connect, ok, Callers)});
 
 waiting_for_auth(?RESP_FRAME(?OP_ERROR, #ecql_error{message = Message}),
                  State = #state{callers = Callers}) ->
-    io:format("Auth Error: ~p~n", [Message]),
     Callers1 = reply(connect, {error, {auth_failed, Message}}, Callers),
     shutdown(auth_error, State#state{callers = Callers1});
 
-waiting_for_auth(_Event, State) ->
-    %TODO:...
-    {next_state, waiting_for_auth, State}.
+waiting_for_auth(Event, State = #state{logger = Logger}) ->
+    ?LOG(Logger, error, "Unexpected Event(waiting_for_auth): ~p", [Event]),
+    next_state(waiting_for_auth, State).
 
-waiting_for_auth(_Event, _From, StateData) ->
-    {reply, {error, waiting_for_auth}, waiting_for_auth, StateData}.
+waiting_for_auth(_Event, _From, State) ->
+    {reply, {error, waiting_for_auth}, waiting_for_auth, State}.
 
 established(Frame, State = #state{logger = Logger})
         when is_record(Frame, ecql_frame) ->
     ?LOG(Logger, info, "Frame ~p", [Frame]),
     NewState = received(Frame, State),
-    {next_state, established, NewState, hibernate};
+    next_state(established, NewState);
 
-established(_Event, State) ->
-    {next_state, established, State}.
+established(Event, State = #state{logger = Logger}) ->
+    ?LOG(Logger, error, "Unexpected Event(established): ~p", [Event]),
+    next_state(established, State).
 
 established({query, Query}, From, State = #state{proto_state = ProtoSate})
         when is_record(Query, ecql_query) ->
     request(From, fun ecql_proto:query/2, [Query, ProtoSate], State);
+
+established({async_query, Query}, From, State = #state{proto_state = ProtoSate}) ->
+    AsyncRef = make_ref(),
+    {_, _, NewState} = request({async, AsyncRef, From}, fun ecql_proto:query/2, [Query, ProtoSate], State),
+    {reply, {ok, AsyncRef}, established, NewState};
 
 established({prepare, Query}, From, State = #state{proto_state = ProtoSate}) ->
     request(From, fun ecql_proto:prepare/2, [Query, ProtoSate], State);
 
 established({execute, Id, Query}, From, State = #state{proto_state = ProtoSate}) ->
     request(From, fun ecql_proto:execute/3, [Id, Query, ProtoSate], State);
+
+established({async_executue, Id, Query}, From, State = #state{proto_state = ProtoSate}) ->
+    AsyncRef = make_ref(),
+    {_, _, NewState} = request({async, AsyncRef, From}, fun ecql_proto:execute/3,
+                               [Id, Query, ProtoSate], State),
+    {reply, {ok, AsyncRef}, established, NewState};
 
 established(_Event, _From, State) ->
     {reply, {error, unsupported}, established, State}.
@@ -242,11 +299,12 @@ request(From, Fun, Args, State = #state{requests = Reqs}) ->
     {next_state, established, State#state{proto_state = ProtoState,
             requests = dict:store(ecql_frame:stream(Frame), From, Reqs)}}.
 
-disconnected(_Event, State) ->
-    {next_state, state_name, State}.
+disconnected(Event, State = #state{logger = Logger}) ->
+    ?LOG(Logger, error, "Unexpected Event(disconnected): ~p", [Event]),
+    {next_state, disconnected, State}.
 
 disconnected(_Event, _From, State) ->
-    {reply, ok, state_name, State}.
+    {reply, {error, disconnected}, disconnected, State}.
 
 handle_event({frame_error, Error}, _StateName, State = #state{logger = Logger}) ->
     ?LOG(Logger, error, "Frame Error: ~p", [Error]),
@@ -257,8 +315,8 @@ handle_event({connection_lost, Reason}, _StateName, State= #state{logger = Logge
      shutdown(Reason, State#state{socket = undefined, receiver = undefined});
 
 handle_event(Event, StateName, State = #state{logger = Logger}) ->
-    ?LOG(Logger, warning, "Unexpected Event when ~s: ~p", [StateName, Event]),
-    {next_state, StateName, State}.
+    ?LOG(Logger, error, "Unexpected Event(~s): ~p", [StateName, Event]),
+    next_state(StateName, State).
 
 handle_sync_event(options, From, StateName, State = #state{requests = Reqs,
                                                            proto_state = ProtoState})
@@ -273,15 +331,15 @@ handle_sync_event(options, From, StateName, State = #state{requests = Reqs,
 handle_sync_event(options, _From, StateName, State) ->
     {reply, {error, StateName}, StateName, State};
 
+handle_sync_event(stop, _From, _StateName, State) ->
+    {stop, normal, ok, State};
+
 handle_sync_event(_Event, _From, StateName, State) ->
-    {reply, ok, StateName, State}.
+    {reply, {error, StateName}, StateName, State}.
 
-handle_info(Frame, established, State) ->
-    io:format("~p~n", [Frame]),
-    {next_state, established, State};
-
-handle_info(_Info, StateName, State) ->
-    {next_state, StateName, State}.
+handle_info(Info, StateName, State = #state{logger = Logger}) ->
+    ?LOG(Logger, error, "Unexpected Info(~s): ~p", [StateName, Info]),
+    next_state(StateName, State).
 
 terminate(_Reason, _StateName, _State) ->
     ok.
@@ -293,10 +351,11 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 connect_cassa(State = #state{nodes     = Nodes,
                              transport = Transport,
                              tcp_opts  = TcpOpts,
+                             ssl_opts  = SslOpts,
                              logger    = Logger}) ->
     {Host, Port} = lists:nth(crypto:rand_uniform(1, length(Nodes) + 1), Nodes),
     ?LOG(Logger, info, "connecting to ~s:~p", [Host, Port]),
-    case ecql_sock:connect(self(), Transport, Host, Port, TcpOpts, Logger) of
+    case ecql_sock:connect(self(), Transport, Host, Port, {TcpOpts, SslOpts}, Logger) of
         {ok, Sock, Receiver} ->
             ?LOG(Logger, info, "connected with ~s:~p", [Host, Port]),
             SendFun = fun(Frame) ->
@@ -344,13 +403,21 @@ received(Frame = ?RESULT_FRAME(_OpCode, Resp), State) ->
 
 response(StreamId, Response, State = #state{requests = Reqs}) ->
     case dict:find(StreamId, Reqs) of
-        {ok, From} -> gen_fsm:reply(From, Response),
-                      State#state{requests = dict:erase(StreamId, Reqs)};
-        error      -> State
+        {ok, {async, Ref, {From, _}}} ->
+            From ! {async_cql_reply, Ref, Response},
+            State#state{requests = dict:erase(StreamId, Reqs)};
+        {ok, From} ->
+            gen_fsm:reply(From, Response),
+            State#state{requests = dict:erase(StreamId, Reqs)};
+        error ->
+            State
     end.
 
 shutdown(Reason, State) ->
     {stop, {shutdown, Reason}, State}.
+
+next_state(StateName, State) ->
+    {next_state, StateName, State, hibernate}.
 
 auth_token(undefined, undefined) ->
     <<0, 0>>;
@@ -359,7 +426,7 @@ auth_token(Username, undefined) ->
 auth_token(Username, Password) ->
     <<0, Username/binary, 0, Password/binary>>.
 
-bin(undefined)           -> undefined;
+bin(undefined)           ->undefined;
 bin(S) when is_list(S)   -> list_to_binary(S);
 bin(B) when is_binary(B) -> B.
 

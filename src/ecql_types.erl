@@ -28,7 +28,8 @@
 
 -include("ecql_types.hrl").
 
--export([name/1, value/1, encode/2, decode/3, to_bytes/1, from_bytes/1]).
+-export([name/1, value/1, is_type/1, encode/1, encode/2,
+         decode/2, decode/3, to_bytes/1, from_bytes/1]).
 
 %%------------------------------------------------------------------------------
 %% Type Name
@@ -78,9 +79,21 @@ value(set)           -> ?TYPE_SET;
 value(udt)           -> ?TYPE_UDT;
 value(tuple)         -> ?TYPE_TUPLE.
 
+is_type(T) ->
+    try value(T) of _I -> true catch error:_ -> false end.
+
 %%------------------------------------------------------------------------------
 %% Encode
 %%------------------------------------------------------------------------------
+
+encode(A) when is_atom(A) ->
+    encode(text, atom_to_list(A));
+encode(L) when is_list(L) ->
+    encode(text, L);
+encode(B) when is_binary(B) ->
+    encode(text, B);
+encode({Type, Val}) when is_atom(Type) ->
+    encode(Type, Val).
 
 encode(ascii, Bin) ->
     Bin;
@@ -172,6 +185,8 @@ to_bytes(Bin) ->
 %%------------------------------------------------------------------------------
 %% Decode
 %%------------------------------------------------------------------------------
+decode(Type, Bin) ->
+    decode(Type, size(Bin), Bin).
 
 decode(ascii, Size, Bin) ->
     <<Ascii:Size/binary, Rest/binary>> = Bin, {Ascii, Rest};

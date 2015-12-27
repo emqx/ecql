@@ -55,17 +55,17 @@
 -define(IS_SSL(Sock), is_record(Sock, ssl_socket)).
 
 %% @doc Connect to Cassandra with TCP or SSL transport
--spec connect(ClientPid, Transport, Host, Port, TcpOpts, Logger) -> {ok, Sock, Receiver} | {error, term()} when
+-spec connect(ClientPid, Transport, Host, Port, Opts, Logger) -> {ok, Sock, Receiver} | {error, term()} when
     ClientPid :: pid(),
     Transport :: tcp | ssl,
     Host      :: inet:ip_address() | string(),
     Port      :: inet:port_number(),
-    TcpOpts   :: [gen_tcp:connect_option()],
+    Opts      :: {[gen_tcp:connect_option()], [ssl:ssl_option()]},
     Logger    :: gen_logger:logmod(),
     Sock      :: inet:socket() | ssl_socket(),
     Receiver  :: pid().
-connect(ClientPid, Transport, Host, Port, TcpOpts, Logger) when is_pid(ClientPid) ->
-    case connect(Transport, Host, Port, TcpOpts) of
+connect(ClientPid, Transport, Host, Port, Opts, Logger) when is_pid(ClientPid) ->
+    case connect(Transport, Host, Port, Opts) of
         {ok, Sock} ->
             ReceiverPid = spawn_link(?MODULE, receiver, [ClientPid, Sock, Logger]),
             controlling_process(Sock, ReceiverPid),
@@ -74,23 +74,24 @@ connect(ClientPid, Transport, Host, Port, TcpOpts, Logger) when is_pid(ClientPid
             {error, Reason}
     end.
 
--spec connect(Transport, Host, Port, TcpOpts) -> {ok, Sock} | {error, any()} when
+-spec connect(Transport, Host, Port, Opts) -> {ok, Sock} | {error, any()} when
     Transport :: tcp | ssl,
     Host      :: inet:ip_address() | string(),
     Port      :: inet:port_number(),
-    TcpOpts   :: [gen_tcp:connect_option()],
+    Opts      :: {[gen_tcp:connect_option()], [ssl:ssl_option()]},
     Sock      :: inet:socket() | ssl_socket().
-connect(tcp, Host, Port, TcpOpts) ->
+connect(tcp, Host, Port, {TcpOpts, _}) ->
     case gen_tcp:connect(Host, Port, merge_opts(?TCPOPTIONS, TcpOpts), ?TIMEOUT) of
         {ok, Sock} -> tune_buffer(Sock),
                       {ok, Sock};
         Error      -> Error
     end;
-connect(ssl, Host, Port, TcpOpts) ->
+
+connect(ssl, Host, Port, {TcpOpts, SslOpts}) ->
     case gen_tcp:connect(Host, Port, merge_opts(?TCPOPTIONS, TcpOpts), ?TIMEOUT) of
         {ok, Sock} ->
             tune_buffer(Sock),
-            case ssl:connect(Sock, ?SSLOPTIONS, ?TIMEOUT) of
+            case ssl:connect(Sock, merge_opts(?SSLOPTIONS, SslOpts), ?TIMEOUT) of
                 {ok, SslSock} -> {ok, #ssl_socket{tcp = Sock, ssl = SslSock}};
                 Error -> Error
             end;

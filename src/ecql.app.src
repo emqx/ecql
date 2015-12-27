@@ -2,7 +2,7 @@
  [
   {description, "Cassandra Native CQL Driver"},
   {vsn, "1.0"},
-  {modules, [ ]},
+  {modules, []},
   {registered, []},
   {applications, [
                   kernel,

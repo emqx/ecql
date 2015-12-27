@@ -72,8 +72,8 @@ prepare(Query, State) when is_binary(Query) ->
 
 %% @doc query frame
 -spec query(binary() | ecql_query(), proto_state()) -> {ecql_frame(), proto_state()}.
-query(Query, State) when is_record(Query, ecql_query) ->
-    send_with_stream(?REQ_FRAME(?OP_QUERY, Query), State);
+query(Query = #ecql_query{values = Values}, State) when is_record(Query, ecql_query) ->
+    send_with_stream(?REQ_FRAME(?OP_QUERY, Query#ecql_query{values = encode_values(Values)}), State);
 
 query(Query, State) when is_binary(Query) ->
     query(#ecql_query{query = Query}, State). 
@@ -90,8 +90,9 @@ query(Query, CL, Values, State) ->
 execute(Id, State) when is_binary(Id) ->
     send_with_stream(?REQ_FRAME(?OP_EXECUTE, #ecql_execute{id = Id}), State).
 
-execute(Id, Query, State) when is_binary(Id) andalso is_record(Query, ecql_query) ->
-    send_with_stream(?REQ_FRAME(?OP_EXECUTE, #ecql_execute{id = Id, query = Query}), State);
+execute(Id, Query = #ecql_query{values = Values}, State) when is_binary(Id) ->
+    Query1 = Query#ecql_query{values = encode_values(Values)},
+    send_with_stream(?REQ_FRAME(?OP_EXECUTE, #ecql_execute{id = Id, query = Query1}), State);
 
 execute(Id, CL, State) when is_binary(Id) andalso ?IS_CL(CL) ->
     execute(Id, #ecql_query{consistency = CL}, State).
@@ -118,4 +119,25 @@ next_stream_id(State = #proto_state{stream_id = 16#ffff}) ->
 
 next_stream_id(State = #proto_state{stream_id = Id}) ->
     State#proto_state{stream_id = Id + 1}.
+
+encode_values(undefined) ->
+    undefined;
+encode_values(Values) ->
+    encode_value(Values, []).
+
+encode_value([], Acc) ->
+    lists:reverse(Acc);
+encode_value([V|Values], Acc) when is_binary(V); is_atom(V); is_list(V) ->
+    encode_value(Values, [ecql_types:encode(V) | Acc]);
+encode_value([{NameOrType, Val} | Values], Acc) ->
+    case ecql_types:is_type(NameOrType) of
+        true ->
+            encode_value(Values, [ecql_types:encode(NameOrType, Val) | Acc]);
+        false ->
+            encode_value(Values, [{bin(NameOrType), ecql_types:encode(Val)} | Acc])
+    end.
+
+bin(A) when is_atom(A)   -> bin(atom_to_list(A));
+bin(S) when is_list(S)   -> list_to_binary(S);
+bin(B) when is_binary(B) -> B.
 

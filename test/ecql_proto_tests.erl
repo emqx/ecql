@@ -26,6 +26,8 @@
 
 -include("ecql.hrl").
 
+-include("ecql_types.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 init() -> ecql_proto:init(fun(_) -> ok end).
@@ -77,8 +79,8 @@ query_test() ->
                          opcode = ?OP_QUERY,
                          message = #ecql_query{query = <<"select">>,
                                                consistency = ?CL_ONE,
-                                               values = [1,2,3]}},
-    {Frame3, State3} = ecql_proto:query(<<"select">>, ?CL_ONE, [1,2,3], State2),
+                                               values = [<<1:?int>>, <<2:?int>>, <<3:?int>>]}},
+    {Frame3, State3} = ecql_proto:query(<<"select">>, ?CL_ONE, [{int, 1}, {int, 2}, {int, 3}], State2),
     ?assertEqual(FrameC, Frame3).
 
 execute_test() ->

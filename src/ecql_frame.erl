@@ -58,6 +58,8 @@
 
 -define(HEADER_SIZE, 9).
 
+-define(NULL, -1).
+
 -spec stream(ecql_frame()) -> stream_id().
 stream(#ecql_frame{stream = StreamId}) ->
     StreamId.
@@ -117,9 +119,6 @@ parse_resp(#ecql_frame{opcode = ?OP_EVENT, body = Body}) ->
 parse_resp(#ecql_frame{opcode = ?OP_AUTH_CHALLENGE, body = Body}) ->
     {Token, _Rest} = parse_bytes(Body),
     #ecql_auth_challenge{token = Token};
-
-parse_resp(#ecql_frame{opcode = ?OP_AUTH_SUCCESS, body = <<>>}) ->
-    #ecql_auth_success{token = <<>>};
 
 parse_resp(#ecql_frame{opcode = ?OP_AUTH_SUCCESS, body = Body}) ->
     {Token, _Rest} = parse_bytes(Body),
@@ -190,17 +189,17 @@ parse_result(_Bin, Resp = #ecql_result{kind = void}) ->
 parse_result(Bin, Resp = #ecql_result{kind = rows}) ->
     {Meta, Rest}   = parse_rows_meta(Bin),
     {Rows, _Rest1} = parse_rows_content(Meta, Rest),
-    Resp#ecql_result{result = #ecql_rows{meta = Meta, data = Rows}};
+    Resp#ecql_result{data = #ecql_rows{meta = Meta, data = Rows}};
 parse_result(Bin, Resp = #ecql_result{kind = set_keyspace}) ->
     {Keyspace, _Rest} = parse_string(Bin),
     Result = #ecql_set_keyspace{keyspace = Keyspace},
-    Resp#ecql_result{result = Result};
+    Resp#ecql_result{data = Result};
 parse_result(Bin, Resp = #ecql_result{kind = prepared}) ->
     {Id, _Rest} = parse_short_bytes(Bin),
-    Resp#ecql_result{result = #ecql_prepared{id = Id}};
+    Resp#ecql_result{data = #ecql_prepared{id = Id}};
 
 parse_result(Bin, Resp = #ecql_result{kind = schema_change}) ->
-    Resp#ecql_result{result = parse_schema_change(Bin)}.
+    Resp#ecql_result{data = parse_schema_change(Bin)}.
 
 parse_schema_change(Bin) ->
     {Type,    Rest}  = parse_string(Bin),
@@ -241,70 +240,69 @@ parse_column(_GlobalTabSpec, 0, Bin, Acc) ->
     {lists:reverse(Acc), Bin};
 parse_column(true, N, Bin, Acc) ->
     {Column, Rest} = parse_string(Bin),
-    %%TODO: extra?
-    {Type, Extra, Rest1} = parse_type(Rest), 
-    parse_column(true, N - 1, Rest1, [{Column, Type, Extra}|Acc]);
+    {Type, Rest1} = parse_type(Rest), 
+    parse_column(true, N - 1, Rest1, [{Column, Type}|Acc]);
     
 parse_column(false, N, Bin, Acc) ->
-    {Keyspace, Rest} = parse_string(Bin),
-    {Table, Rest1} = parse_string(Rest),
+    {_Keyspace, Rest} = parse_string(Bin),
+    {_Table, Rest1} = parse_string(Rest),
     {Column, Rest2} = parse_string(Rest1),
-    {Type, Extra, Rest3} = parse_type(Rest2),
-    parse_column(false, N - 1, Rest3, [{Column, Type, Extra}|Acc]).
+    {Type, Rest3} = parse_type(Rest2),
+    parse_column(false, N - 1, Rest3, [{Column, Type}|Acc]).
 
 parse_type(<<?TYPE_CUSTOM:?short, Bin/binary>>) ->
     {Class, Rest} = parse_string(Bin),
-    {custom, Class, Rest};
+    {{custom, Class}, Rest};
 parse_type(<<?TYPE_ASCII:?short, Bin/binary>>) ->
-    {ascii, undefined, Bin};
+    {ascii, Bin};
 parse_type(<<?TYPE_BIGINT:?short, Bin/binary>>) ->
-    {bigint, undefined, Bin};
+    {bigint, Bin};
 parse_type(<<?TYPE_BLOB:?short, Bin/binary>>) ->
-    {blob, undefined, Bin};
+    {blob, Bin};
 parse_type(<<?TYPE_BOOLEAN:?short, Bin/binary>>) ->
-    {boolean, undefined, Bin};
+    {boolean, Bin};
 parse_type(<<?TYPE_COUNTER:?short, Bin/binary>>) ->
-    {counter, undefined, Bin};
+    {counter, Bin};
 parse_type(<<?TYPE_DECIMAL:?short, Bin/binary>>) ->
-    {decimal, undefined, Bin};
+    {decimal, Bin};
 parse_type(<<?TYPE_DOUBLE:?short, Bin/binary>>) ->
-    {double, undefined, Bin};
+    {double, Bin};
 parse_type(<<?TYPE_FLOAT:?short, Bin/binary>>) ->
-    {float, undefined, Bin};
+    {float, Bin};
 parse_type(<<?TYPE_INT:?short, Bin/binary>>) ->
-    {int, undefined, Bin};
+    {int, Bin};
 parse_type(<<?TYPE_TIMESTAMP:?short, Bin/binary>>) ->
-    {timestamp, undefined, Bin};
+    {timestamp, Bin};
 parse_type(<<?TYPE_UUID:?short, Bin/binary>>) ->
-    {uuid, undefined, Bin};
+    {uuid, Bin};
 parse_type(<<?TYPE_VARCHAR:?short, Bin/binary>>) ->
-    {varchar, undefined, Bin};
+    {varchar, Bin};
 parse_type(<<?TYPE_VARINT:?short, Bin/binary>>) ->
-    {varint, undefined, Bin};
+    {varint, Bin};
 parse_type(<<?TYPE_TIMEUUID:?short, Bin/binary>>) ->
-    {timeuuid, undefined, Bin};
+    {timeuuid, Bin};
 parse_type(<<?TYPE_INET:?short, Bin/binary>>) ->
-    {inet, undefined, Bin};
+    {inet, Bin};
 parse_type(<<?TYPE_LIST:?short, Bin/binary>>) ->
-    {Type, Extra, Rest} = parse_type(Bin),
-    {list, {Type, Extra}, Rest};
+    {Type, Rest} = parse_type(Bin),
+    {{list, Type}, Rest};
 parse_type(<<?TYPE_MAP:?short, Bin/binary>>) ->
-    {KeyType, KeyExtra, Rest} = parse_type(Bin),
-    {ValType, ValExtra, Rest1} = parse_type(Rest),
-    {map, {{KeyType, KeyExtra}, {ValType, ValExtra}}, Rest1};
+    {KeyType, Rest} = parse_type(Bin),
+    {ValType, Rest1} = parse_type(Rest),
+    {{map, {KeyType, ValType}}, Rest1};
 parse_type(<<?TYPE_SET:?short, Bin/binary>>) ->
-    {Type, Extra, Rest} = parse_type(Bin),
-    {set, {Type, Extra}, Rest};
+    {Type, Rest} = parse_type(Bin),
+    {{set, Type}, Rest};
 parse_type(<<?TYPE_UDT:?short, _Bin/binary>>) ->
     throw({error, unsupport_udt_type});
 parse_type(<<?TYPE_TUPLE:?short, Bin/binary>>) ->
     <<N:?short, Rest/binary>> = Bin,
     {Rest1, ElTypes} =
     lists:foldl(fun(_I, {Rest1, Acc}) ->
-            {Type, Extra, Rest2} = parse_type(Rest1),
-            {Rest2, [{Type, Extra}|Acc]}
+            {Type, Rest2} = parse_type(Rest1),
+            {Rest2, [Type | Acc]}
         end, {Rest, []}, lists:seq(1, N)),
-    {tuple, lists:reverse(ElTypes), Rest1}.
+    {{tuple, list_to_tuple(lists:reverse(ElTypes))}, Rest1}.
 
 parse_rows_content(Meta, <<Count:?int, Bin/binary>>) ->
     parse_rows_content(Meta, Count, Bin).
@@ -326,15 +324,13 @@ parse_row(#ecql_rows_meta{columns = Columns}, Bin) ->
             end, {[], Bin}, Columns),
     {lists:reverse(Cells), Rest}.
 
-parse_cell(_Col, <<16#FFFFFFFF:32, Bin/binary>>) ->
+parse_cell(_Col, <<?NULL:?int, Bin/binary>>) ->
     {null, Bin};
-parse_cell(Col, Bin) ->
-    {Val, Rest} = parse_bytes(Bin),
-    {parse_cell_val(Col, Val), Rest}.
+parse_cell({_Name, Type}, Bin) ->
+    {Bytes, Rest} = parse_bytes(Bin),
+    {Val, _}= ecql_types:decode(Type, size(Bytes), Bytes),
+    {Val, Rest}.
 
-%% TODO:...
-parse_cell_val(Col, Val) -> Val.
-    
 parse_string_multimap(<<Len:?short, Bin/binary>>) ->
     parse_string_multimap(Len, Bin, []).
 
@@ -359,6 +355,8 @@ parse_string_list(Len, Bin, Acc) ->
 parse_string(<<Len:?short, Str:Len/binary, Rest/binary>>) ->
     {Str, Rest}.
 
+parse_bytes(<<?NULL:?int, Bin/binary>>) ->
+    {<<>>, Bin};
 parse_bytes(<<Size:?int, Bin/binary>>) ->
     <<Bytes:Size/binary, Rest/binary>> = Bin,
     {Bytes, Rest}.
@@ -438,7 +436,7 @@ serialize_batch_query_values([H|_] = Values) when is_tuple(H) ->
 serialize_batch_query_values([H|_] = Values) when is_binary(H) ->
     ValuesBin = << <<(serialize_bytes(Val))/binary>> || Val <- Values >>,
     << (length(Values)):?short, ValuesBin/binary>>.
-    
+
 serialize_query_parameters(#ecql_query{consistency = Consistency,
                                        values = Values,
                                        skip_metadata = SkipMetadata,
@@ -465,6 +463,9 @@ serialize_parameter(values, [H |_] = Vals) when is_tuple(H) ->
 serialize_parameter(values, [H |_] = Vals) when is_binary(H) ->
     Bin = << <<(serialize_bytes(Val))/binary>> || Val <- Vals >>,
     <<(length(Vals)):?short, Bin/binary>>;
+
+serialize_parameter(skip_metadata, _) ->
+    <<>>;
 
 serialize_parameter(result_page_size, PageSize) ->
     <<PageSize:?int>>;
@@ -502,13 +503,13 @@ serialize_short_bytes(Bytes) ->
 serialize_bytes(Bin) ->
     ecql_types:to_bytes(Bin).
 
-serialize_option_list(Options) ->
-    Bin = << <<(serialize_option(Opt))/binary>> || Opt <- Options >>,
-    <<(size(Options)):?short, Bin/binary>>.
+%%serialize_option_list(Options) ->
+%%    Bin = << <<(serialize_option(Opt))/binary>> || Opt <- Options >>,
+%%    <<(size(Options)):?short, Bin/binary>>.
 
-serialize_option({Id, Val}) ->
+%%serialize_option({Id, Val}) ->
     %%TODO:...
-    <<>>.
+%%    <<>>.
 
 result_kind(16#01) -> void;
 result_kind(16#02) -> rows;
@@ -522,13 +523,16 @@ result_kind(prepared)      -> 16#04;
 result_kind(schema_change) -> 16#05.
 
 flag(values, undefined)                   -> 0;
+flag(values, [])                          -> 0;
 flag(values, [Val|_]) when is_binary(Val) -> 0;
 flag(values, [Val|_]) when is_tuple(Val)  -> 1.
 
 flag(undefined) -> 0;
+flag([])        -> 0;
 flag(false)     -> 0;
 flag(true)      -> 1;
 flag(_Val)      -> 1.
 
 bool(1) -> true;
 bool(0) -> false.
+

@@ -133,7 +133,7 @@
 
 -define(RESULT_FRAME(Kind, Result),
         #ecql_frame{version = ?VER_RESP, opcode = ?OP_RESULT,
-                    message = #ecql_result{kind = Kind, result = Result}}).
+                    message = #ecql_result{kind = Kind, data = Result}}).
 
 %%------------------------------------------------------------------------------
 %% Request Message
@@ -189,9 +189,9 @@
 
 -record(ecql_schema_change, {type, target, options}).
 
--record(ecql_result, {kind   :: ecql_result_kind(),
-                      result :: #ecql_rows{} | #ecql_set_keyspace{}
-                              | #ecql_prepared{} | #ecql_schema_change{}}).
+-record(ecql_result, {kind :: ecql_result_kind(),
+                      data :: #ecql_rows{} | #ecql_set_keyspace{}
+                            | #ecql_prepared{} | #ecql_schema_change{}}).
 
 -record(ecql_event, {type :: binary(), data :: binary()}).
 
