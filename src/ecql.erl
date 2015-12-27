@@ -53,6 +53,7 @@
 -type option() :: {nodes,    [{host(), inet:port_number()}]}
                 | {username, binary()}
                 | {password, binary()}
+                | {keyspace, binary()}
                 | {ssl,      boolean()}
                 | {ssl_opts, [ssl:ssl_option()]}
                 | {timeout,  timeout()}
@@ -61,6 +62,7 @@
 -record(state, {nodes     :: [{host(), inet:port_number()}],
                 username  :: binary(),
                 password  :: binary(),
+                keyspace  :: binary(),
                 transport :: tcp | ssl,
                 socket    :: inet:socket(),
                 receiver  :: pid(),
@@ -188,6 +190,8 @@ init_opt([{username, Username}| Opts], State) ->
     init_opt(Opts, State#state{username = bin(Username)});
 init_opt([{password, Password}| Opts], State) ->
     init_opt(Opts, State#state{password = bin(Password)});
+init_opt([{keyspace, Keyspace}| Opts], State) ->
+    init_opt(Opts, State#state{keyspace = bin(Keyspace)});
 init_opt([ssl | Opts], State) ->
     ssl:start(), % ok?
     init_opt(Opts, State#state{transport = ssl});
