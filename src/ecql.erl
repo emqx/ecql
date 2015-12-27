@@ -36,7 +36,7 @@
 
 %% API Function Exports
 -export([start_link/1, start_link/2, options/1, query/2, query/3,
-         prepare/2, execute/3, execute/4]).
+         prepare/2, execute/2, execute/3, execute/4]).
 
 %% gen_fsm Function Exports
 -export([startup/2, startup/3, waiting_for_ready/2, waiting_for_ready/3,
@@ -91,50 +91,46 @@ start_link(Opts) ->
         -> {ok, pid()} | {error, any()}.
 start_link(Opts, TcpOpts) ->
     case gen_fsm:start_link(?MODULE, [Opts], []) of
-        {ok, Pid} ->
-            connect(Pid, TcpOpts);
+        {ok, CPid} ->
+            connect(CPid, TcpOpts);
         {error, Error} ->
             {error, Error}
     end.
 
-connect(Pid, TcpOpts) ->
-    case gen_fsm:sync_send_event(Pid, {connect, TcpOpts}) of
-        ok             -> {ok, Pid};
+connect(CPid, TcpOpts) ->
+    case gen_fsm:sync_send_event(CPid, {connect, TcpOpts}) of
+        ok             -> {ok, CPid};
         {error, Error} -> {error, Error}
     end.
 
 -spec options(pid()) -> {ok, list()} | {error, any()}.
-options(Pid) ->
-    gen_fsm:sync_send_all_state_event(Pid, options).
+options(CPid) ->
+    gen_fsm:sync_send_all_state_event(CPid, options).
 
 -spec query(pid(), binary()) -> {ok, cql_result()} | {error, any()}.
-query(Pid, Query) when is_binary(Query) ->
-    query(Pid, Query, ?CL_ONE).
+query(CPid, Query) when is_binary(Query) ->
+    query(CPid, Query, one).
 
-query(Pid, Query, CL) when is_binary(Query) andalso is_atom(CL) ->
-    query(Pid, Query, ecql_cl:value(CL));
+-spec query(pid(), binary(), list()) -> {ok, cql_result()} | {error, any()}.
+query(CPid, Query, Values) when is_binary(Query) andalso is_list(Values) ->
+    query(CPid, Query, Values, one).
 
-query(Pid, Query, CL) when is_binary(Query) andalso ?IS_CL(CL) ->
-    query(Pid, Query, CL, undefined).
+-spec query(pid(), binary(), list(), atom()) -> {ok, cql_result()} | {error, any()}.
+query(CPid, Query, Values, CL) when is_binary(Query) andalso is_atom(CL) ->
+    gen_fsm:sync_send_event(CPid,{query, #ecql_query{query = Query, consistency = ecql_cl:value(CL), values = Values}}).
 
-query(Pid, Query, CL, Values) when is_binary(Query) andalso ?IS_CL(CL) ->
-    gen_fsm:sync_send_event(Pid, {query, #ecql_query{query = Query, consistency  = CL, values = Values}}).
+prepare(CPid, Query) when is_binary(Query) ->
+    gen_fsm:sync_send_event(CPid, {prepare, Query}).
 
-prepare(Pid, Query) when is_list(Query) -> 
-    prepare(Pid, list_to_binary(Query));
+execute(CPid, Id) when is_binary(Id) ->
+    execute(CPid, Id, #ecql_query{}).
 
-prepare(Pid, Query) when is_binary(Query) -> 
-    gen_fsm:sync_send_event(Pid, {prepare, Query}).
+execute(CPid, Id, Values) when is_binary(Id) andalso is_list(Values) ->
+    execute(CPid, Id, Values, one).
 
-execute(C, Id, CL) when is_binary(Id) andalso ?IS_CL(CL) ->
-    execute(C, Id, #ecql_query{consistency = ecql_cl:value(CL)});
-
-execute(C, Id, Query) when is_binary(Id), is_record(Query, ecql_query) ->
-    gen_fsm:sync_send_event(C, {execute, Id, Query}).
-
-execute(C, Id, CL, Values) when is_binary(Id) andalso ?IS_CL(CL) ->
-    execute(C, Id, #ecql_query{consistency = ecql_cl:value(CL),
-                               values = Values}).
+execute(CPid, Id, Values, CL) when is_binary(Id) andalso is_atom(CL) ->
+    Query = #ecql_query{consistency = ecql_cl:value(CL), values = Values},
+    gen_fsm:sync_send_event(CPid, {execute, Id, Query}).
 
 %% gen_fsm Function Definitions
 
