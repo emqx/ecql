@@ -8,6 +8,12 @@ Cassandra Native CQL Driver written in Erlang/OTP.
 * Username, Password Authentication
 * Query, Prepare and Execute
 
+## Limits
+
+* TODO: Batch Query Support
+* TODO: Event Register
+* TODO: SSL Support
+
 ## Usage
 
 ### Schema
