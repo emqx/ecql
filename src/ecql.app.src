@@ -1,7 +1,7 @@
 {application, ecql,
  [
   {description, "Cassandra Native CQL Driver"},
-  {vsn, "1.0"},
+  {vsn, "0.3"},
   {modules, []},
   {registered, []},
   {applications, [
