@@ -34,7 +34,7 @@ CREATE TABLE test.tab(
     col_list list<text>,
     col_map map<text, text>,
     PRIMARY KEY (first_id, second_id)
-) WITH CLUSTERING ORDER BY (second_id DESC)
+) WITH CLUSTERING ORDER BY (second_id DESC);
 
 insert into test.tab(first_id, second_id, col_text, col_int, col_ts, col_bool, col_float, col_double, col_inet, col_list, col_map) values(1, 'secid', 'text', 10, 19823, true, 1.23, 3.14, '127.0.0.1', ['one', 'two', 'three'], {'key': 'value'});
 
