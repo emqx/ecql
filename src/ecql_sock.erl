@@ -105,6 +105,9 @@ tune_buffer(Sock) ->
     inet:setopts(Sock, [{buffer, max(RecBuf, SndBuf)}]).
 
 %% @doc Sock controlling process
+-spec controlling_process(Sock, Pid) -> ok when
+      Sock  :: inet:socket() | ssl_socket(),
+      Pid   :: pid().
 controlling_process(Sock, Pid) when is_port(Sock) ->
     gen_tcp:controlling_process(Sock, Pid);
 controlling_process(#ssl_socket{ssl = SslSock}, Pid) ->
@@ -127,7 +130,7 @@ close(#ssl_socket{ssl = SslSock}) ->
     ssl:close(SslSock).
 
 %% @doc Stop Receiver.
--spec stop(Receiver :: pid()) -> ok.
+-spec stop(Receiver :: pid()) -> stop.
 stop(Receiver) ->
     Receiver ! stop.
 
@@ -160,7 +163,7 @@ sockname(#ssl_socket{ssl = SslSock}) ->
 sockname_s(Sock) ->
     case sockname(Sock) of
         {ok, {Addr, Port}} ->
-            {ok, lists:flatten(io_lib:format("~s:~p", [maybe_ntoab(Addr), Port]))};
+            {ok, io_lib:format("~s:~p", [maybe_ntoab(Addr), Port])};
         Error ->
             Error
     end.
@@ -181,23 +184,23 @@ receiver_loop(ClientPid, Sock, ParserFun, Logger) ->
                 {ok, NewParserFun} ->
                     receiver_activate(ClientPid, Sock, NewParserFun, Logger);
                 {error, Error} ->
-                    gen_fsm:send_all_state_event(ClientPid, {frame_error, Error})
+                    exit({frame_error, Error})
             end;
         {tcp_error, Sock, Reason} ->
-            connection_lost(ClientPid, {tcp_error, Reason});
+            exit({tcp_error, Reason});
         {tcp_closed, Sock} ->
-            connection_lost(ClientPid, tcp_closed);
+            exit(tcp_closed);
         {ssl, _SslSock, Data} ->
             case parse_received_data(ClientPid, Data, ParserFun) of
                 {ok, NewParserFun} ->
                     receiver_activate(ClientPid, Sock, NewParserFun, Logger);
                 {error, Error} ->
-                    gen_fsm:send_all_state_event(ClientPid, {frame_error, Error})
+                    exit({frame_error, Error})
             end;
         {ssl_error, _SslSock, Reason} ->
-            connection_lost(ClientPid, {ssl_error, Reason});
+            exit({ssl_error, Reason});
         {ssl_closed, _SslSock} ->
-            connection_lost(ClientPid, ssl_closed);
+            exit(ssl_closed);
         stop -> 
             close(Sock)
     end.
@@ -215,9 +218,6 @@ parse_received_data(ClientPid, Data, ParserFun) ->
         {error, Error} ->
             {error, Error}
     end.
-
-connection_lost(ClientPid, Reason) ->
-    gen_fsm:send_all_state_event(ClientPid, {connection_lost, Reason}).
 
 maybe_ntoab(Addr) when is_tuple(Addr) -> ntoab(Addr);
 maybe_ntoab(Host)                     -> Host.
