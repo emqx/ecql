@@ -187,10 +187,7 @@ close(CPid) -> gen_fsm:sync_send_all_state_event(CPid, close).
 %%%-----------------------------------------------------------------------------
 
 init([Opts]) ->
-    case erlang:function_exported(erlang, timestamp, 0) of
-        true  -> random:seed(erlang:timestamp());
-        false -> random:seed(os:timestamp())
-    end,
+    random:seed(os:timestamp()),
     State = #state{nodes     = [{"127.0.0.1", 9042}],
                    callers   = [],
                    requests  = dict:new(),
