@@ -1,10 +1,10 @@
-.PHONY: test
+.PHONY: test edoc dialyzer
 
 ERL=erl
-BEAMDIR=./deps/*/ebin ./ebin
-REBAR=./rebar
-REBAR_GEN=../../rebar
-DIALYZER=dialyzer
+BASE_DIR = $(shell pwd)
+BEAMDIR  = $(BASE_DIR)/deps/*/ebin $(BASE_DIR)/ebin
+REBAR    = $(BASE_DIR)/rebar
+DIALYZER = dialyzer
 
 #update-deps 
 all: get-deps compile xref
@@ -29,4 +29,12 @@ test:
 
 edoc:
 	@$(REBAR) doc
+
+PLT = $(BASE_DIR)/.ecql_dialyzer.plt
+
+build_plt: compile
+	dialyzer --build_plt --output_plt $(PLT) --apps erts kernel stdlib ssl ./deps/*/ebin ./ebin
+
+dialyzer: compile
+	dialyzer -Wno_return --plt $(PLT) ./ebin
 
