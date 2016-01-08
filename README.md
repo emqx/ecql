@@ -25,30 +25,44 @@ schema/test.schema.md
 Connect to localhost:9042:
 
 ```
-{ok, C} = ecql:start_link().
+{ok, C} = ecql:connect().
 ```
 
 Connect to nodes with username, password:
 
 ```
-CassNodes = [{"localhost", 9042}, {"192.168.1.4", 9042}],
-{ok, C} = ecql:start_link([{nodes, CassNodes}, {username, <<"test">>}, {password, <<"test">>}]).
+CassNodes = [{"127.0.0.1", 9042}, {"192.168.1.4", 9042}],
+{ok, C} = ecql:connect([{nodes, CassNodes}, {username, "cassandra"}, {password, "cassandra"}]).
 ```
 
 ### Query
 
 ```
-{ok, KeySpace} = ecql:query(C, <<"use test">>).
+{ok, KeySpace} = ecql:query(C, "use test").
 
-{ok, {TableSpec, Columns, Rows}} = ecql:query(C, <<"select * from test.tab">>).
+{ok, {TableSpec, Columns, Rows}} = ecql:query(C, "select * from test.tab").
 
-{ok, {TableSpec, Columns, Rows}} = ecql:query(C, <<"select * from test.tab where first_id = ? and second_id = ?">>, [{bigint, 1}, 'secid']).
+{ok, {TableSpec, Columns, Rows}} = ecql:query(C, "select * from test.tab where first_id = ? and second_id = ?", [{bigint, 1}, 'secid']).
+```
+
+### Async Query
+
+```
+{ok, Ref} = ecql:async_query(C, "select * from test.tab"),
+receive
+	{async_cql_reply, Ref, {ok, Result} ->
+		io:format("Result: ~p~n", [Result]);
+	{async_cql_reply, Ref, Error} ->
+        io:format("Result: ~p~n", [Result])
+after
+	1000 -> error(timeout)
+end.
 ```
 
 ### Prepare
 
 ```
-{ok, Id} = ecql:prepare(C, <<"select * from test.tab where first_id = ? and second_id = ?">>).
+{ok, Id} = ecql:prepare(C, "select * from test.tab where first_id = ? and second_id = ?").
 ```
 
 ### Execute
@@ -57,12 +71,19 @@ CassNodes = [{"localhost", 9042}, {"192.168.1.4", 9042}],
 {ok, {TableSpec, Columns, Rows}} = ecql:execute(C, Id, [{bigint, 1}, 'secid']).
 ```
 
+### Close
+
+```
+ok = ecql:close(C).
+```
+
 ## Connect Options
 
 ```erlang
 -type option() :: {nodes,    [{host(), inet:port_number()}]}
-                | {username, binary()}
-                | {password, binary()}
+                | {username, iolist()}
+                | {password, iolist()}
+                | {keyspace, iolist()}
                 | {tcp_opts, [gen_tcp:connect_option()]}
                 | {ssl,      boolean()}
                 | {ssl_opts, [ssl:ssl_option()]}
