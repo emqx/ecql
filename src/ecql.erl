@@ -51,9 +51,9 @@
 -type host() :: inet:ip_address() | inet:hostname().
 
 -type option() :: {nodes,    [{host(), inet:port_number()}]}
-                | {username, binary()}
-                | {password, binary()}
-                | {keyspace, binary()}
+                | {username, iodata()}
+                | {password, iodata()}
+                | {keyspace, iodata()}
                 | {ssl,      boolean()}
                 | {ssl_opts, [ssl:ssl_option()]}
                 | {timeout,  timeout()}
