@@ -33,12 +33,12 @@
 -include("ecql_types.hrl").
 
 %% API Function Exports
--export([start_link/0, start_link/1, options/1,
+-export([connect/0, connect/1, options/1,
          query/2, query/3, query/4,
          async_query/2, async_query/3, async_query/4,
          prepare/2, execute/2, execute/3, execute/4,
          async_execute/2, async_execute/3, async_execute/4,
-         stop/1]).
+         close/1]).
 
 %% gen_fsm Function Exports
 -export([startup/2, startup/3, waiting_for_ready/2, waiting_for_ready/3,
@@ -51,9 +51,9 @@
 -type host() :: inet:ip_address() | inet:hostname().
 
 -type option() :: {nodes,    [{host(), inet:port_number()}]}
-                | {username, iodata()}
-                | {password, iodata()}
-                | {keyspace, iodata()}
+                | {username, iolist()}
+                | {password, iolist()}
+                | {keyspace, iolist()}
                 | {ssl,      boolean()}
                 | {ssl_opts, [ssl:ssl_option()]}
                 | {timeout,  timeout()}
@@ -69,7 +69,7 @@
                 callers   :: list(),
                 requests  :: dict:dict(),
                 prepared  :: list(),
-                logger    :: gen_logger:logmod(),
+                logger    :: undefined | gen_logger:logmod(),
                 ssl       :: boolean(),
                 ssl_opts  :: [ssl:ssl_option()], 
                 tcp_opts  :: [gen_tcp:connect_option()],
@@ -81,65 +81,76 @@
 
 -define(PASSWORD_AUTHENTICATOR, <<"org.apache.cassandra.auth.PasswordAuthenticator">>).
 
+-type query_string() :: string() | iodata().
+
 -type cql_result() :: Keyspace :: binary()
                     | {TableSpec :: binary(), Columns :: [tuple()], Rows :: list()}
                     | {Type :: binary(), Target :: binary(), Options :: any()}.
 
 -export_type([cql_result/0]).
 
-%% API Function Definitions
+%%%-----------------------------------------------------------------------------
+%%% API Function Definitions
+%%%-----------------------------------------------------------------------------
 
--spec start_link() -> {ok, pid()} | {error, any()}.
-start_link() ->
-    start_link([]).
+%% @doc Connect to cassandra.
+-spec connect() -> {ok, pid()} | {error, any()}.
+connect() -> connect([]).
 
--spec start_link([option()]) -> {ok, pid()} | {error, any()}.
-start_link(Opts) ->
+-spec connect([option()]) -> {ok, pid()} | {error, any()}.
+connect(Opts) when is_list(Opts) ->
     case gen_fsm:start_link(?MODULE, [Opts], []) of
         {ok, CPid}     -> connect(CPid);
         {error, Error} -> {error, Error}
-    end.
+    end;
 
-connect(CPid) ->
+connect(CPid) when is_pid(CPid) ->
     case gen_fsm:sync_send_event(CPid, connect) of
         ok             -> {ok, CPid};
         {error, Error} -> {error, Error}
     end.
 
+%% @doc Options.
 -spec options(pid()) -> {ok, list()} | {error, any()}.
 options(CPid) ->
     gen_fsm:sync_send_all_state_event(CPid, options).
 
--spec query(pid(), binary()) -> {ok, cql_result()} | {error, any()}.
-query(CPid, Query) when is_binary(Query) ->
-    gen_fsm:sync_send_event(CPid, {query, #ecql_query{query = Query}}).
+%% @doc Query.
+-spec query(pid(), query_string()) -> {ok, cql_result()} | {error, any()}.
+query(CPid, Query) ->
+    gen_fsm:sync_send_event(CPid, {query, #ecql_query{query = iolist_to_binary(Query)}}).
 
--spec query(pid(), binary(), list()) -> {ok, cql_result()} | {error, any()}.
-query(CPid, Query, Values) when is_binary(Query) andalso is_list(Values) ->
+-spec query(pid(), query_string(), list()) -> {ok, cql_result()} | {error, any()}.
+query(CPid, Query, Values) when is_list(Values) ->
     query(CPid, Query, Values, one).
 
--spec query(pid(), binary(), list(), atom()) -> {ok, cql_result()} | {error, any()}.
-query(CPid, Query, Values, CL) when is_binary(Query) andalso is_atom(CL) ->
-    QObj = #ecql_query{query = Query, consistency = ecql_cl:value(CL), values = Values},
+-spec query(pid(), query_string(), list(), atom()) -> {ok, cql_result()} | {error, any()}.
+query(CPid, Query, Values, CL) when is_atom(CL) ->
+    QObj = #ecql_query{query = iolist_to_binary(Query), consistency = ecql_cl:value(CL), values = Values},
     gen_fsm:sync_send_event(CPid,{query, QObj}).
 
--spec async_query(pid(), binary()) -> {ok, reference()} | {error, any()}.
-async_query(CPid, Query) when is_binary(Query) ->
-    gen_fsm:sync_send_event(CPid, {async_query, #ecql_query{query = Query}}).
+%% @doc Query Asynchronously.
+-spec async_query(pid(), query_string()) -> {ok, reference()} | {error, any()}.
+async_query(CPid, Query) ->
+    gen_fsm:sync_send_event(CPid, {async_query, #ecql_query{query = iolist_to_binary(Query)}}).
 
--spec async_query(pid(), binary(), list()) -> {ok, reference()} | {error, any()}.
-async_query(CPid, Query, Values) when is_binary(Query) ->
+-spec async_query(pid(), query_string(), list()) -> {ok, reference()} | {error, any()}.
+async_query(CPid, Query, Values) ->
     async_query(CPid, Query, Values, one).
 
--spec async_query(pid(), binary(), list(), atom()) -> {ok, reference()} | {error, any()}.
-async_query(CPid, Query, Values, CL) when is_binary(Query) andalso is_atom(CL) ->
-    QObj = #ecql_query{query = Query, consistency = ecql_cl:value(CL), values = Values},
+-spec async_query(pid(), query_string(), list(), atom()) -> {ok, reference()} | {error, any()}.
+async_query(CPid, Query, Values, CL) when is_atom(CL) ->
+    QObj = #ecql_query{query = iolist_to_binary(Query),
+                       consistency = ecql_cl:value(CL),
+                       values = Values},
     gen_fsm:sync_send_event(CPid,{async_query, QObj}).
 
--spec prepare(pid(), binary()) -> {ok, binary()} | {error, any()}.
-prepare(CPid, Query) when is_binary(Query) ->
-    gen_fsm:sync_send_event(CPid, {prepare, Query}).
+%% @doc Prepare.
+-spec prepare(pid(), query_string()) -> {ok, binary()} | {error, any()}.
+prepare(CPid, Query) ->
+    gen_fsm:sync_send_event(CPid, {prepare, iolist_to_binary(Query)}).
 
+%% @doc Execute.
 -spec execute(pid(), binary()) -> {ok, cql_result()} | {error, any()}.
 execute(CPid, Id) when is_binary(Id) ->
     gen_fsm:sync_send_event(CPid, {execute, Id, #ecql_query{}}).
@@ -153,6 +164,7 @@ execute(CPid, Id, Values, CL) when is_binary(Id) andalso is_atom(CL) ->
     QObj = #ecql_query{consistency = ecql_cl:value(CL), values = Values},
     gen_fsm:sync_send_event(CPid, {execute, Id, QObj}).
 
+%% @doc Execute Asynchronously.
 -spec async_execute(pid(), binary()) -> {ok, reference()} | {error, any()}.
 async_execute(CPid, Id) when is_binary(Id) ->
     gen_fsm:sync_send_event(CPid, {async_execute, Id, #ecql_query{}}).
@@ -166,13 +178,19 @@ async_execute(CPid, Id, Values, CL) when is_binary(Id) andalso is_atom(CL) ->
     QObj = #ecql_query{consistency = ecql_cl:value(CL), values = Values},
     gen_fsm:sync_send_event(CPid, {async_execute, Id, QObj}).
 
-stop(CPid) ->
-    gen_fsm:sync_send_all_state_event(CPid, stop).
+%% @doc Close the client.
+-spec close(pid()) -> ok.
+close(CPid) -> gen_fsm:sync_send_all_state_event(CPid, close).
 
-%% gen_fsm Function Definitions
+%%%-----------------------------------------------------------------------------
+%%% gen_fsm Function Definitions
+%%%-----------------------------------------------------------------------------
 
 init([Opts]) ->
-    random:seed(os:timestamp()),
+    case erlang:function_exported(erlang, timestamp, 0) of
+        true  -> random:seed(erlang:timestamp());
+        false -> random:seed(os:timestamp())
+    end,
     State = #state{nodes     = [{"127.0.0.1", 9042}],
                    callers   = [],
                    requests  = dict:new(),
@@ -187,11 +205,11 @@ init_opt([], State) ->
 init_opt([{nodes, Nodes} | Opts], State) ->
     init_opt(Opts, State#state{nodes = Nodes});
 init_opt([{username, Username}| Opts], State) ->
-    init_opt(Opts, State#state{username = bin(Username)});
+    init_opt(Opts, State#state{username = iolist_to_binary(Username)});
 init_opt([{password, Password}| Opts], State) ->
-    init_opt(Opts, State#state{password = bin(Password)});
+    init_opt(Opts, State#state{password = iolist_to_binary(Password)});
 init_opt([{keyspace, Keyspace}| Opts], State) ->
-    init_opt(Opts, State#state{keyspace = bin(Keyspace)});
+    init_opt(Opts, State#state{keyspace = iolist_to_binary(Keyspace)});
 init_opt([ssl | Opts], State) ->
     ssl:start(), % ok?
     init_opt(Opts, State#state{transport = ssl});
@@ -335,7 +353,7 @@ handle_sync_event(options, From, StateName, State = #state{requests = Reqs,
 handle_sync_event(options, _From, StateName, State) ->
     {reply, {error, StateName}, StateName, State};
 
-handle_sync_event(stop, _From, _StateName, State) ->
+handle_sync_event(close, _From, _StateName, State) ->
     {stop, normal, ok, State};
 
 handle_sync_event(_Event, _From, StateName, State) ->
@@ -351,7 +369,10 @@ terminate(_Reason, _StateName, _State) ->
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
-%% Internal Function Definitions
+%%%-----------------------------------------------------------------------------
+%%% Internal Function Definitions
+%%%-----------------------------------------------------------------------------
+
 connect_cassa(State = #state{nodes     = Nodes,
                              transport = Transport,
                              tcp_opts  = TcpOpts,
@@ -408,7 +429,10 @@ received(Frame = ?RESULT_FRAME(_OpCode, Resp), State) ->
 response(StreamId, Response, State = #state{requests = Reqs}) ->
     case dict:find(StreamId, Reqs) of
         {ok, {async, Ref, {From, _}}} ->
-            From ! {async_cql_reply, Ref, Response},
+            case Response =:= ok of
+                true  -> ignore;
+                false -> From ! {async_cql_reply, Ref, Response}
+            end,
             State#state{requests = dict:erase(StreamId, Reqs)};
         {ok, From} ->
             gen_fsm:reply(From, Response),
@@ -429,8 +453,4 @@ auth_token(Username, undefined) ->
     <<0, Username/binary, 0>>;
 auth_token(Username, Password) ->
     <<0, Username/binary, 0, Password/binary>>.
-
-bin(undefined)           ->undefined;
-bin(S) when is_list(S)   -> list_to_binary(S);
-bin(B) when is_binary(B) -> B.
 

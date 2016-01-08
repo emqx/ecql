@@ -104,7 +104,7 @@
                      opcode  :: opcode(),
                      length  :: pos_integer(),
                      body    :: binary(),
-                     message :: record()}).
+                     message}).
 
 -type ecql_frame() :: #ecql_frame{}.
 

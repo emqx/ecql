@@ -157,9 +157,8 @@ parse_error(Error = #ecql_error{code = ?ERR_UNPREPARED}, Bin) ->
 parse_error(Error, Bin) -> %% default
     Error#ecql_error{detail = Bin}.
 
-parse_event(EvenType = <<"TOPOLOGY_CHANGE">>, Bin)
-        when   EvenType =:= <<"TOPOLOGY_CHANGE">>
-        orelse EvenType =:= <<"STATUS_CHANGE">> ->
+parse_event(EvenType, Bin) when EvenType =:= <<"TOPOLOGY_CHANGE">>;
+                                EvenType =:= <<"STATUS_CHANGE">> ->
     {Change, Rest} = parse_string(Bin),
     {IpBytes, Rest2} = parse_bytes(Rest),
     {Ip, _} = ecql_types:decode(inet, size(IpBytes), IpBytes),
@@ -365,6 +364,7 @@ parse_short_bytes(<<Size:?short, Bin/binary>>) ->
     <<Bytes:Size/binary, Rest/binary>> = Bin,
     {Bytes, Rest}.
 
+-spec serialize(ecql_frame()) -> binary().
 serialize(Frame) ->
     serialize(header, serialize(body, Frame)).
 
@@ -515,12 +515,7 @@ result_kind(16#01) -> void;
 result_kind(16#02) -> rows;
 result_kind(16#03) -> set_keyspace;
 result_kind(16#04) -> prepared;
-result_kind(16#05) -> schema_change;
-result_kind(void)  -> 16#01;
-result_kind(rows)  -> 16#02;
-result_kind(set_keyspace)  -> 16#03;
-result_kind(prepared)      -> 16#04;
-result_kind(schema_change) -> 16#05.
+result_kind(16#05) -> schema_change.
 
 flag(values, undefined)                   -> 0;
 flag(values, [])                          -> 0;

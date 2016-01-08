@@ -116,7 +116,7 @@ controlling_process(#ssl_socket{ssl = SslSock}, Pid) ->
 %% @doc Send Frame and Data
 -spec send(Sock, Data) -> ok when 
     Sock  :: inet:socket() | ssl_socket(),
-    Data  :: binary().
+    Data  :: iodata().
 send(Sock, Data) when is_port(Sock) ->
     gen_tcp:send(Sock, Data);
 send(#ssl_socket{ssl = SslSock}, Data) ->
