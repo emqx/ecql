@@ -124,11 +124,11 @@ string_list_test() ->
     ?assertEqual({List, <<>>}, ecql_frame:parse_string_list(
                                 ecql_frame:serialize_string_list(List))).
 
-string_multimap_test() ->
-    MultiMap = [{<<"key">>, [<<"val1">>, <<"val2">>]},
-                {<<"key2">>, [<<"val3">>, <<"val4">>]}],
-    ?assertEqual({MultiMap, <<>>}, ecql_frame:parse_string_multimap(
-                                    ecql_frame:serialize_string_multimap(MultiMap))).
+%%string_multimap_test() ->
+%%    MultiMap = [{<<"key">>, [<<"val1">>, <<"val2">>]},
+%%                {<<"key2">>, [<<"val3">>, <<"val4">>]}],
+%%    ?assertEqual({MultiMap, <<>>}, ecql_frame:parse_string_multimap(
+%%                                    ecql_frame:serialize_string_multimap(MultiMap))).
 
 serialize_query_test() ->
     Query = #ecql_query{query = <<"select * from tab">>,

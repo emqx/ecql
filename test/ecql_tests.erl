@@ -28,20 +28,22 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -define(OPTIONS, [{nodes, [{"127.0.0.1", 9042}]},
+                  {keyspace, "test"},
                   {username, "cassandra"},
                   {password, "cassandra"}]).
 
 ecql_test_() ->
-    {foreach, fun setup/0, fun cleanup/1, [fun cases/1]}.
+    {foreach, fun setup/0, fun cleanup/1, [fun tests/1]}.
 
 setup() ->
     {ok, C} = ecql:connect(?OPTIONS), C.
 
-cases(C) ->
+tests(C) ->
     [?_test(t_use_keyspace(C)),
      ?_test(t_select(C)),
      ?_test(t_update(C)),
-     ?_test(t_prepare(C))].
+     ?_test(t_prepare(C)),
+     ?_test(t_named_prepare(C))].
 
 cleanup(C) ->
     ecql:close(C).
@@ -69,6 +71,10 @@ t_update(C) ->
 t_prepare(C) ->
     {ok, Id} = ecql:prepare(C, "select * from test.tab where first_id = ? and second_id = ?"),
     {ok, {TableSpec, Columns, Rows}} = ecql:execute(C, Id, [{bigint, 1}, 'secid']).
+
+t_named_prepare(C) ->
+    {ok, _Id} = ecql:prepare(C, select_one, "select * from test.tab where first_id = ? limit 1"), 
+    {ok, {TableSpec, Columns, Rows}} = ecql:execute(C, select_one, [{bigint, 1}]).
 
 -endif.
 
