@@ -27,7 +27,7 @@
 -module(ecql_sock).
 
 %% API
--export([connect/6, controlling_process/2, send/2, close/1, stop/1]).
+-export([connect/7, controlling_process/2, send/2, close/1, stop/1]).
 
 -export([sockname/1, sockname_s/1, setopts/2, getstat/2]).
 
@@ -55,17 +55,19 @@
 -define(IS_SSL(Sock), is_record(Sock, ssl_socket)).
 
 %% @doc Connect to Cassandra with TCP or SSL transport
--spec connect(ClientPid, Transport, Host, Port, Opts, Logger) -> {ok, Sock, Receiver} | {error, term()} when
+-spec connect(ClientPid, Transport, Host, Port, TcpOpts, SslOpts, Logger) ->
+    {ok, Sock, Receiver} | {error, term()} when
     ClientPid :: pid(),
     Transport :: tcp | ssl,
     Host      :: inet:ip_address() | string(),
     Port      :: inet:port_number(),
-    Opts      :: {[gen_tcp:connect_option()], [ssl:ssl_option()]},
+    TcpOpts   :: [gen_tcp:connect_option()],
+    SslOpts   :: [ssl:ssl_option()],
     Logger    :: gen_logger:logmod(),
     Sock      :: inet:socket() | ssl_socket(),
     Receiver  :: pid().
-connect(ClientPid, Transport, Host, Port, Opts, Logger) when is_pid(ClientPid) ->
-    case connect(Transport, Host, Port, Opts) of
+connect(ClientPid, Transport, Host, Port, TcpOpts, SslOpts, Logger) when is_pid(ClientPid) ->
+    case connect(Transport, Host, Port, TcpOpts, SslOpts) of
         {ok, Sock} ->
             ReceiverPid = spawn_link(?MODULE, receiver, [ClientPid, Sock, Logger]),
             controlling_process(Sock, ReceiverPid),
@@ -74,20 +76,21 @@ connect(ClientPid, Transport, Host, Port, Opts, Logger) when is_pid(ClientPid) -
             {error, Reason}
     end.
 
--spec connect(Transport, Host, Port, Opts) -> {ok, Sock} | {error, any()} when
+-spec connect(Transport, Host, Port, TcpOpts, SslOpts) -> {ok, Sock} | {error, any()} when
     Transport :: tcp | ssl,
     Host      :: inet:ip_address() | string(),
     Port      :: inet:port_number(),
-    Opts      :: {[gen_tcp:connect_option()], [ssl:ssl_option()]},
+    TcpOpts   :: [gen_tcp:connect_option()],
+    SslOpts   :: [ssl:ssl_option()],
     Sock      :: inet:socket() | ssl_socket().
-connect(tcp, Host, Port, {TcpOpts, _}) ->
+connect(tcp, Host, Port, TcpOpts, _SslOpts) ->
     case gen_tcp:connect(Host, Port, merge_opts(?TCPOPTIONS, TcpOpts), ?TIMEOUT) of
         {ok, Sock} -> tune_buffer(Sock),
                       {ok, Sock};
         Error      -> Error
     end;
 
-connect(ssl, Host, Port, {TcpOpts, SslOpts}) ->
+connect(ssl, Host, Port, TcpOpts, SslOpts) ->
     case gen_tcp:connect(Host, Port, merge_opts(?TCPOPTIONS, TcpOpts), ?TIMEOUT) of
         {ok, Sock} ->
             tune_buffer(Sock),

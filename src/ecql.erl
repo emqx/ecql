@@ -421,7 +421,7 @@ connect_cassa(State = #state{nodes     = Nodes,
                              logger    = Logger}) ->
     {Host, Port} = lists:nth(crypto:rand_uniform(1, length(Nodes) + 1), Nodes),
     ?LOG(Logger, info, "connecting to ~s:~p", [Host, Port]),
-    case ecql_sock:connect(self(), Transport, Host, Port, {TcpOpts, SslOpts}, Logger) of
+    case ecql_sock:connect(self(), Transport, Host, Port, TcpOpts, SslOpts, Logger) of
         {ok, Sock, Receiver} ->
             ?LOG(Logger, info, "connected with ~s:~p", [Host, Port]),
             SendFun = fun(Frame) ->
