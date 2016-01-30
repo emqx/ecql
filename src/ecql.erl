@@ -1,5 +1,5 @@
 %%%-----------------------------------------------------------------------------
-%%% Copyright (c) 2015 eMQTT.IO, All Rights Reserved.
+%%% Copyright (c) 2015-2016 Feng Lee <feng@emqtt.io>. All Rights Reserved.
 %%%
 %%% Permission is hereby granted, free of charge, to any person obtaining a copy
 %%% of this software and associated documentation files (the "Software"), to deal
@@ -36,7 +36,7 @@
 -export([connect/0, connect/1, options/1,
          query/2, query/3, query/4,
          async_query/2, async_query/3, async_query/4,
-         prepare/2, execute/2, execute/3, execute/4,
+         prepare/2, prepare/3, execute/2, execute/3, execute/4,
          async_execute/2, async_execute/3, async_execute/4,
          close/1]).
 
@@ -54,8 +54,8 @@
                 | {username, iolist()}
                 | {password, iolist()}
                 | {keyspace, iolist()}
-                | {ssl,      boolean()}
-                | {ssl_opts, [ssl:ssl_option()]}
+                | {prepared, [{atom(), iolist()}]}
+                | ssl | {ssl, [ssl:ssloption()]}
                 | {timeout,  timeout()}
                 | {logger,   atom() | {atom(), atom()}}.
 
@@ -68,9 +68,8 @@
                 receiver  :: pid(),
                 callers   :: list(),
                 requests  :: dict:dict(),
-                prepared  :: list(),
+                prepared  :: dict:dict(),
                 logger    :: undefined | gen_logger:logmod(),
-                ssl       :: boolean(),
                 ssl_opts  :: [ssl:ssl_option()], 
                 tcp_opts  :: [gen_tcp:connect_option()],
                 compression :: boolean(),
@@ -80,6 +79,10 @@
         Logger:Level("[ecql~p] " ++ Format, [self() | Args])).
 
 -define(PASSWORD_AUTHENTICATOR, <<"org.apache.cassandra.auth.PasswordAuthenticator">>).
+
+-define(PREPARED(Id), (is_atom(Id) orelse is_binary(Id))).
+
+-type prepared_id() :: atom() | binary().
 
 -type query_string() :: string() | iodata().
 
@@ -106,9 +109,12 @@ connect(Opts) when is_list(Opts) ->
 
 connect(CPid) when is_pid(CPid) ->
     case gen_fsm:sync_send_event(CPid, connect) of
-        ok             -> {ok, CPid};
-        {error, Error} -> {error, Error}
+        ok     -> {ok, _} = set_keyspace(CPid),
+                  {ok, CPid};
+        Error -> Error
     end.
+
+set_keyspace(CPid) -> gen_fsm:sync_send_event(CPid, set_keyspace).
 
 %% @doc Options.
 -spec options(pid()) -> {ok, list()} | {error, any()}.
@@ -150,31 +156,36 @@ async_query(CPid, Query, Values, CL) when is_atom(CL) ->
 prepare(CPid, Query) ->
     gen_fsm:sync_send_event(CPid, {prepare, iolist_to_binary(Query)}).
 
+%% @doc Named Prepare.
+-spec prepare(pid(), Name :: atom(), query_string()) -> {ok, binary()} | {error, any()}.
+prepare(CPid, Name, Query) ->
+    gen_fsm:sync_send_event(CPid, {prepare, Name, iolist_to_binary(Query)}).
+
 %% @doc Execute.
--spec execute(pid(), binary()) -> {ok, cql_result()} | {error, any()}.
-execute(CPid, Id) when is_binary(Id) ->
+-spec execute(pid(), prepared_id()) -> {ok, cql_result()} | {error, any()}.
+execute(CPid, Id) when ?PREPARED(Id) ->
     gen_fsm:sync_send_event(CPid, {execute, Id, #ecql_query{}}).
 
--spec execute(pid(), binary(), list()) -> {ok, cql_result()} | {error, any()}.
-execute(CPid, Id, Values) when is_binary(Id) andalso is_list(Values) ->
+-spec execute(pid(), prepared_id(), list()) -> {ok, cql_result()} | {error, any()}.
+execute(CPid, Id, Values) when ?PREPARED(Id) andalso is_list(Values) ->
     execute(CPid, Id, Values, one).
 
--spec execute(pid(), binary(), list(), atom()) -> {ok, cql_result()} | {error, any()}.
-execute(CPid, Id, Values, CL) when is_binary(Id) andalso is_atom(CL) ->
+-spec execute(pid(), prepared_id(), list(), atom()) -> {ok, cql_result()} | {error, any()}.
+execute(CPid, Id, Values, CL) when ?PREPARED(Id) andalso is_atom(CL) ->
     QObj = #ecql_query{consistency = ecql_cl:value(CL), values = Values},
     gen_fsm:sync_send_event(CPid, {execute, Id, QObj}).
 
 %% @doc Execute Asynchronously.
--spec async_execute(pid(), binary()) -> {ok, reference()} | {error, any()}.
-async_execute(CPid, Id) when is_binary(Id) ->
+-spec async_execute(pid(), prepared_id()) -> {ok, reference()} | {error, any()}.
+async_execute(CPid, Id) when ?PREPARED(Id) ->
     gen_fsm:sync_send_event(CPid, {async_execute, Id, #ecql_query{}}).
 
--spec async_execute(pid(), binary(), list()) -> {ok, reference()} | {error, any()}.
-async_execute(CPid, Id, Values) when is_binary(Id) andalso is_list(Values) ->
+-spec async_execute(pid(), prepared_id(), list()) -> {ok, reference()} | {error, any()}.
+async_execute(CPid, Id, Values) when ?PREPARED(Id) andalso is_list(Values) ->
     async_execute(CPid, Id, Values, one).
 
--spec async_execute(pid(), binary(), list(), atom()) -> {ok, reference()} | {error, any()}.
-async_execute(CPid, Id, Values, CL) when is_binary(Id) andalso is_atom(CL) ->
+-spec async_execute(pid(), prepared_id(), list(), atom()) -> {ok, reference()} | {error, any()}.
+async_execute(CPid, Id, Values, CL) when ?PREPARED(Id) andalso is_atom(CL) ->
     QObj = #ecql_query{consistency = ecql_cl:value(CL), values = Values},
     gen_fsm:sync_send_event(CPid, {async_execute, Id, QObj}).
 
@@ -191,6 +202,7 @@ init([Opts]) ->
     State = #state{nodes     = [{"127.0.0.1", 9042}],
                    callers   = [],
                    requests  = dict:new(),
+                   prepared  = dict:new(),
                    transport = tcp,
                    tcp_opts  = [],
                    ssl_opts  = [],
@@ -210,10 +222,11 @@ init_opt([{keyspace, Keyspace}| Opts], State) ->
 init_opt([ssl | Opts], State) ->
     ssl:start(), % ok?
     init_opt(Opts, State#state{transport = ssl});
+init_opt([{ssl, SslOpts} | Opts], State) ->
+    ssl:start(), % ok?
+    init_opt(Opts, State#state{transport = ssl, ssl_opts = SslOpts});
 init_opt([{tcp_opts, TcpOpts} | Opts], State) ->
     init_opt(Opts, State#state{tcp_opts = TcpOpts});
-init_opt([{ssl_opts, SslOpts} | Opts], State) ->
-    init_opt(Opts, State#state{ssl_opts = SslOpts});
 init_opt([{logger, Cfg} | Opts], State) ->
     init_opt(Opts, State#state{logger = gen_logger:new(Cfg)});
 init_opt([Opt | _Opts], _State) ->
@@ -289,6 +302,13 @@ established(Event, State = #state{logger = Logger}) ->
     ?LOG(Logger, error, "Unexpected Event(established): ~p", [Event]),
     next_state(established, State).
 
+established(set_keyspace, _From, State = #state{keyspace = undefined}) ->
+    {reply, {ok, undefined}, established, State};
+
+established(set_keyspace, From, State = #state{keyspace = Keyspace}) ->
+    Query = #ecql_query{query = <<"use ", Keyspace/binary>>},
+    established({query, Query}, From, State);
+
 established({query, Query}, From, State = #state{proto_state = ProtoSate})
         when is_record(Query, ecql_query) ->
     request(From, fun ecql_proto:query/2, [Query, ProtoSate], State);
@@ -301,7 +321,31 @@ established({async_query, Query}, From, State = #state{proto_state = ProtoSate})
 established({prepare, Query}, From, State = #state{proto_state = ProtoSate}) ->
     request(From, fun ecql_proto:prepare/2, [Query, ProtoSate], State);
 
-established({execute, Id, Query}, From, State = #state{proto_state = ProtoSate}) ->
+established({prepare, Name, Query}, From, State = #state{requests = Reqs,
+                                                         prepared = Prepared,
+                                                         proto_state = ProtoSate}) ->
+    case dict:find(Name, Prepared) of
+        {ok, Id} ->
+            %%TODO: unprepare?
+            {reply, {ok, Id}, established, State};
+        error ->
+            {Frame, ProtoState} = ecql_proto:prepare(Query, ProtoSate),
+            StreamId = ecql_frame:stream(Frame),
+            NewState = State#state{proto_state = ProtoState,
+                                   prepared    = dict:store({pending, StreamId}, Name, Prepared),
+                                   requests    = dict:store(StreamId, From, Reqs)},
+            {next_state, established, NewState}
+    end;
+
+established({execute, Name, Query}, From, State = #state{prepared = Prepared}) when is_atom(Name) ->
+    case dict:find(Name, Prepared) of
+        {ok, Id} ->
+            established({execute, Id, Query}, From, State);
+        error ->
+            {reply, {error, not_prepared}, established, State}
+    end;
+
+established({execute, Id, Query}, From, State = #state{proto_state = ProtoSate}) when is_binary(Id) ->
     request(From, fun ecql_proto:execute/3, [Id, Query, ProtoSate], State);
 
 established({async_executue, Id, Query}, From, State = #state{proto_state = ProtoSate}) ->
@@ -414,8 +458,13 @@ received(Frame = ?RESULT_FRAME(rows, #ecql_rows{meta = Meta, data = Rows}), Stat
 received(Frame = ?RESULT_FRAME(set_keyspace, #ecql_set_keyspace{keyspace = Keyspace}), State) ->
     response(ecql_frame:stream(Frame), {ok, Keyspace}, State);
 
-received(Frame = ?RESULT_FRAME(prepared, #ecql_prepared{id = Id}), State) ->
-    response(ecql_frame:stream(Frame), {ok, Id}, State);
+received(Frame = ?RESULT_FRAME(prepared, #ecql_prepared{id = Id}), State = #state{prepared = Prepared}) ->
+    PendingKey = {pending, ecql_frame:stream(Frame)},
+    Prepared1 = case dict:find(PendingKey, Prepared) of
+                    {ok, Name} -> dict:store(Name, Id, dict:erase(PendingKey, Prepared));
+                    error      -> Prepared
+                end,
+    response(ecql_frame:stream(Frame), {ok, Id}, State#state{prepared = Prepared1});
 
 received(Frame = ?RESULT_FRAME(schema_change, #ecql_schema_change{type = Type, target = Target, options = Options}), State) ->
     response(ecql_frame:stream(Frame), {ok, {Type, Target, Options}}, State);

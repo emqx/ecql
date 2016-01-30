@@ -1,5 +1,5 @@
 %%%-----------------------------------------------------------------------------
-%%% Copyright (c) 2015 eMQTT.IO, All Rights Reserved.
+%%% Copyright (c) 2015-2016 Feng Lee <feng@emqtt.io>. All Rights Reserved.
 %%%
 %%% Permission is hereby granted, free of charge, to any person obtaining a copy
 %%% of this software and associated documentation files (the "Software"), to deal
@@ -479,9 +479,9 @@ serialize_parameter(serial_consistency, SerialConsistency) ->
 serialize_parameter(timestamp, Timestamp) ->
     <<Timestamp:?long>>.
 
-serialize_string_multimap(Map) ->
-    Bin = << <<(serialize_string(K))/binary, (serialize_string_list(L))/binary>> || {K, L} <- Map >>,
-    <<(length(Map)):?short, Bin/binary>>.
+%%serialize_string_multimap(Map) ->
+%%    Bin = << <<(serialize_string(K))/binary, (serialize_string_list(L))/binary>> || {K, L} <- Map >>,
+%%    <<(length(Map)):?short, Bin/binary>>.
 
 serialize_string_map(Map) ->
     Bin = << <<(serialize_string(K))/binary, (serialize_string(V))/binary>> || {K, V} <- Map >>,
