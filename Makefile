@@ -1,36 +1,13 @@
-.PHONY: test edoc dialyzer
+PROJECT = ecql
+DEPS = gen_logger
+dep_gen_logger = git git://github.com/emqtt/gen_logger.git
+include erlang.mk
 
-ERL=erl
-BASE_DIR = $(shell pwd)
-BEAMDIR  = $(BASE_DIR)/deps/*/ebin $(BASE_DIR)/ebin
-REBAR    = $(BASE_DIR)/rebar
 DIALYZER = dialyzer
-
-#update-deps 
-all: get-deps compile xref
-
-get-deps:
-	@$(REBAR) get-deps
-
-update-deps:
-	@$(REBAR) update-deps
-
-compile:
-	@$(REBAR) compile
-
-xref:
-	@$(REBAR) xref skip_deps=true
-
-clean:
-	@$(REBAR) clean
-
-test:
-	@$(REBAR) skip_deps=true eunit
-
-edoc:
-	@$(REBAR) doc
-
+BASE_DIR = $(shell pwd)
 PLT = $(BASE_DIR)/.ecql_dialyzer.plt
+
+.PHONY: buid_plt dialyzer
 
 build_plt: compile
 	dialyzer --build_plt --output_plt $(PLT) --apps erts kernel stdlib ssl ./deps/*/ebin ./ebin
