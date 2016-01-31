@@ -57,7 +57,7 @@
                 | {prepared, [{atom(), iolist()}]}
                 | ssl | {ssl, [ssl:ssloption()]}
                 | {timeout,  timeout()}
-                | {logger,   atom() | {atom(), atom()}}.
+                | {logger,   gen_logger:logcfg()}.
 
 -record(state, {nodes     :: [{host(), inet:port_number()}],
                 username  :: binary(),
