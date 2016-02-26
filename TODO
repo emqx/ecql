@@ -5,3 +5,18 @@ Compression
 
 Pool
 
+Named Prepared:
+
+{Name :: atom(), Stmt :: iodata()}
+
+{pending, SeqId} -> Name
+Name -> PrepreId
+
+
+prepare(Name :: atom(), State) ->
+    dict:find(Name, dict)
+        {ok, Id} ->
+        error
+    end
+
+SslOpts::...
