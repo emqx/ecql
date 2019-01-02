@@ -41,7 +41,7 @@
 
 -spec init(SendFun :: fun((ecql_frame()) -> proto_state())) -> proto_state().
 init(SendFun) ->
-    #proto_state{send_fun = SendFun, stream_id = random:uniform(16#FF)}.
+    #proto_state{send_fun = SendFun, stream_id = rand:uniform(16#FF)}.
 
 stream_id(#proto_state{stream_id = StreamId}) -> StreamId.
 

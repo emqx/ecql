@@ -1,11 +1,11 @@
 PROJECT = ecql
-DEPS = gen_logger
-dep_gen_logger = git git://github.com/emqtt/gen_logger.git
 include erlang.mk
 
 DIALYZER = dialyzer
 BASE_DIR = $(shell pwd)
 PLT = $(BASE_DIR)/.ecql_dialyzer.plt
+
+ERLC_OPTS = +debug_info
 
 .PHONY: buid_plt dialyzer
 
