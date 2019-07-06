@@ -70,7 +70,7 @@
                 requests  :: dict:dict(),
                 prepared  :: dict:dict(),
                 logger    :: undefined | gen_logger:logmod(),
-                ssl_opts  :: [ssl:ssl_option()], 
+                ssl_opts  :: [ssl:ssl_option()],
                 tcp_opts  :: [gen_tcp:connect_option()],
                 compression :: boolean(),
                 proto_state}).
@@ -229,8 +229,8 @@ init_opt([{tcp_opts, TcpOpts} | Opts], State) ->
     init_opt(Opts, State#state{tcp_opts = TcpOpts});
 init_opt([{logger, Cfg} | Opts], State) ->
     init_opt(Opts, State#state{logger = gen_logger:new(Cfg)});
-init_opt([Opt | _Opts], _State) ->
-    throw({badopt, Opt}).
+init_opt([_Opt | Opts], State) ->
+    init_opt(Opts, State).
 
 startup(Event, State = #state{logger = Logger}) ->
     Logger:error("[startup]: Unexpected Event: ~p", [Event]),
