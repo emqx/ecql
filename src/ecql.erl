@@ -223,8 +223,8 @@ init_opt([{ssl, SslOpts} | Opts], State) ->
     init_opt(Opts, State#state{transport = ssl, ssl_opts = SslOpts});
 init_opt([{tcp_opts, TcpOpts} | Opts], State) ->
     init_opt(Opts, State#state{tcp_opts = TcpOpts});
-init_opt([Opt | _Opts], _State) ->
-    throw({badopt, Opt}).
+init_opt([_Opt | Opts], State) ->
+    init_opt(Opts, State).
 
 startup(Event, State) ->
     ?LOG(error, "[startup]: Unexpected Event: ~p", [Event]),
