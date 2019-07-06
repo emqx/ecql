@@ -56,8 +56,7 @@
                 | {keyspace, iolist()}
                 | {prepared, [{atom(), iolist()}]}
                 | ssl | {ssl, [ssl:ssloption()]}
-                | {timeout,  timeout()}
-                | {logger,   gen_logger:logcfg()}.
+                | {timeout,  timeout()}.
 
 -record(state, {nodes     :: [{host(), inet:port_number()}],
                 username  :: binary(),
@@ -69,14 +68,13 @@
                 callers   :: list(),
                 requests  :: dict:dict(),
                 prepared  :: dict:dict(),
-                logger    :: undefined | gen_logger:logmod(),
                 ssl_opts  :: [ssl:ssl_option()],
                 tcp_opts  :: [gen_tcp:connect_option()],
                 compression :: boolean(),
                 proto_state}).
 
--define(LOG(Logger, Level, Format, Args),
-        Logger:Level("[ecql~p] " ++ Format, [self() | Args])).
+-define(LOG(Level, Format, Args),
+        logger:Level("[ecql~p] " ++ Format, [self() | Args])).
 
 -define(PASSWORD_AUTHENTICATOR, <<"org.apache.cassandra.auth.PasswordAuthenticator">>).
 
@@ -198,15 +196,13 @@ close(CPid) -> gen_fsm:sync_send_all_state_event(CPid, close).
 %%%-----------------------------------------------------------------------------
 
 init([Opts]) ->
-    random:seed(os:timestamp()),
     State = #state{nodes     = [{"127.0.0.1", 9042}],
                    callers   = [],
                    requests  = dict:new(),
                    prepared  = dict:new(),
                    transport = tcp,
                    tcp_opts  = [],
-                   ssl_opts  = [],
-                   logger    = gen_logger:new({console, debug})},
+                   ssl_opts  = []},
     {ok, startup, init_opt(Opts, State)}.
 
 init_opt([], State) ->
@@ -227,13 +223,11 @@ init_opt([{ssl, SslOpts} | Opts], State) ->
     init_opt(Opts, State#state{transport = ssl, ssl_opts = SslOpts});
 init_opt([{tcp_opts, TcpOpts} | Opts], State) ->
     init_opt(Opts, State#state{tcp_opts = TcpOpts});
-init_opt([{logger, Cfg} | Opts], State) ->
-    init_opt(Opts, State#state{logger = gen_logger:new(Cfg)});
 init_opt([_Opt | Opts], State) ->
     init_opt(Opts, State).
 
-startup(Event, State = #state{logger = Logger}) ->
-    Logger:error("[startup]: Unexpected Event: ~p", [Event]),
+startup(Event, State) ->
+    ?LOG(error, "[startup]: Unexpected Event: ~p", [Event]),
     {next_state, startup, State}.
 
 startup(connect, From, State = #state{callers = Callers}) ->
@@ -263,21 +257,21 @@ waiting_for_ready(?RESP_FRAME(?OP_AUTHENTICATE, #ecql_authenticate{class = Class
     reply(connect, {error, {unsupported_auth_class, Class}}, Callers),
     shutdown({auth_error, Class}, State);
 
-waiting_for_ready(Event, State = #state{logger = Logger}) ->
-    ?LOG(Logger, error, "Uexpected Event(waiting_for_ready): ~p", [Event]),
+waiting_for_ready(Event, State) ->
+    ?LOG(error, "Uexpected Event(waiting_for_ready): ~p", [Event]),
     next_state(waiting_for_ready, State).
 
 waiting_for_ready(_Event, _From, State) ->
     {reply, {error, waiting_for_ready}, waiting_for_ready, State}.
 
 waiting_for_auth(?RESP_FRAME(?OP_AUTH_CHALLENGE, #ecql_auth_challenge{token = Token}),
-                 State = #state{callers = Callers, logger = Logger}) ->
-    ?LOG(Logger, error, "Auth Challenge: ~p", [Token]),
+                 State = #state{callers = Callers}) ->
+    ?LOG(error, "Auth Challenge: ~p", [Token]),
     shutdown(password_error, State#state{callers = reply(connect, {error, password_error}, Callers)});
 
 waiting_for_auth(?RESP_FRAME(?OP_AUTH_SUCCESS, #ecql_auth_success{token = Token}),
-                 State = #state{callers = Callers, logger = Logger}) ->
-    ?LOG(Logger, info, "Auth Success: ~p", [Token]),
+                 State = #state{callers = Callers}) ->
+    ?LOG(info, "Auth Success: ~p", [Token]),
     next_state(established, State#state{callers = reply(connect, ok, Callers)});
 
 waiting_for_auth(?RESP_FRAME(?OP_ERROR, #ecql_error{message = Message}),
@@ -285,21 +279,21 @@ waiting_for_auth(?RESP_FRAME(?OP_ERROR, #ecql_error{message = Message}),
     Callers1 = reply(connect, {error, {auth_failed, Message}}, Callers),
     shutdown(auth_error, State#state{callers = Callers1});
 
-waiting_for_auth(Event, State = #state{logger = Logger}) ->
-    ?LOG(Logger, error, "Unexpected Event(waiting_for_auth): ~p", [Event]),
+waiting_for_auth(Event, State) ->
+    ?LOG(error, "Unexpected Event(waiting_for_auth): ~p", [Event]),
     next_state(waiting_for_auth, State).
 
 waiting_for_auth(_Event, _From, State) ->
     {reply, {error, waiting_for_auth}, waiting_for_auth, State}.
 
-established(Frame, State = #state{logger = Logger})
+established(Frame, State)
         when is_record(Frame, ecql_frame) ->
-    ?LOG(Logger, info, "Frame ~p", [Frame]),
+    ?LOG(info, "Frame ~p", [Frame]),
     NewState = received(Frame, State),
     next_state(established, NewState);
 
-established(Event, State = #state{logger = Logger}) ->
-    ?LOG(Logger, error, "Unexpected Event(established): ~p", [Event]),
+established(Event, State) ->
+    ?LOG(error, "Unexpected Event(established): ~p", [Event]),
     next_state(established, State).
 
 established(set_keyspace, _From, State = #state{keyspace = undefined}) ->
@@ -362,23 +356,23 @@ request(From, Fun, Args, State = #state{requests = Reqs}) ->
     {next_state, established, State#state{proto_state = ProtoState,
             requests = dict:store(ecql_frame:stream(Frame), From, Reqs)}}.
 
-disconnected(Event, State = #state{logger = Logger}) ->
-    ?LOG(Logger, error, "Unexpected Event(disconnected): ~p", [Event]),
+disconnected(Event, State) ->
+    ?LOG(error, "Unexpected Event(disconnected): ~p", [Event]),
     {next_state, disconnected, State}.
 
 disconnected(_Event, _From, State) ->
     {reply, {error, disconnected}, disconnected, State}.
 
-handle_event({frame_error, Error}, _StateName, State = #state{logger = Logger}) ->
-    ?LOG(Logger, error, "Frame Error: ~p", [Error]),
+handle_event({frame_error, Error}, _StateName, State) ->
+    ?LOG(error, "Frame Error: ~p", [Error]),
     shutdown({frame_error, Error}, State);
 
-handle_event({connection_lost, Reason}, _StateName, State= #state{logger = Logger}) ->
-    ?LOG(Logger, warning, "Connection lost for: ~p", [Reason]),
+handle_event({connection_lost, Reason}, _StateName, State) ->
+    ?LOG(warning, "Connection lost for: ~p", [Reason]),
      shutdown(Reason, State#state{socket = undefined, receiver = undefined});
 
-handle_event(Event, StateName, State = #state{logger = Logger}) ->
-    ?LOG(Logger, error, "Unexpected Event(~s): ~p", [StateName, Event]),
+handle_event(Event, StateName, State) ->
+    ?LOG(error, "Unexpected Event(~s): ~p", [StateName, Event]),
     next_state(StateName, State).
 
 handle_sync_event(options, From, StateName, State = #state{requests = Reqs,
@@ -400,8 +394,8 @@ handle_sync_event(close, _From, _StateName, State) ->
 handle_sync_event(_Event, _From, StateName, State) ->
     {reply, {error, StateName}, StateName, State}.
 
-handle_info(Info, StateName, State = #state{logger = Logger}) ->
-    ?LOG(Logger, error, "Unexpected Info(~s): ~p", [StateName, Info]),
+handle_info(Info, StateName, State) ->
+    ?LOG(error, "Unexpected Info(~s): ~p", [StateName, Info]),
     next_state(StateName, State).
 
 terminate(_Reason, _StateName, _State) ->
@@ -417,16 +411,15 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 connect_cassa(State = #state{nodes     = Nodes,
                              transport = Transport,
                              tcp_opts  = TcpOpts,
-                             ssl_opts  = SslOpts,
-                             logger    = Logger}) ->
+                             ssl_opts  = SslOpts}) ->
     {Host, Port} = lists:nth(crypto:rand_uniform(1, length(Nodes) + 1), Nodes),
-    ?LOG(Logger, info, "connecting to ~s:~p", [Host, Port]),
-    case ecql_sock:connect(self(), Transport, Host, Port, TcpOpts, SslOpts, Logger) of
+    ?LOG(info, "connecting to ~s:~p", [Host, Port]),
+    case ecql_sock:connect(self(), Transport, Host, Port, TcpOpts, SslOpts) of
         {ok, Sock, Receiver} ->
-            ?LOG(Logger, info, "connected with ~s:~p", [Host, Port]),
+            ?LOG(info, "connected with ~s:~p", [Host, Port]),
             SendFun = fun(Frame) ->
                     Data = ecql_frame:serialize(Frame),
-                    ?LOG(Logger, debug, "SEND: ~p", [Data]),
+                    ?LOG(debug, "SEND: ~p", [Data]),
                     ecql_sock:send(Sock, Data)
             end,
             ProtoState = ecql_proto:init(SendFun),
