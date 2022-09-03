@@ -105,7 +105,7 @@ rows_result_parse_test() ->
 
     {ok, #ecql_frame{stream = 195, opcode = ?OP_RESULT,
                      message = #ecql_result{kind = rows, data = Data}}, <<>>} = Parser(Bin),
-    #ecql_rows{meta = Meta, data = [Row1|_] = Rows} = Data,
+    #ecql_rows{meta = Meta, data = [Row1|_]} = Data,
     ?assertEqual(Columns, Meta#ecql_rows_meta.columns),
     ?assertEqual([3,<<"haha">>,null,null,null,null,null,null, null,<<"haha">>,null], Row1).
 

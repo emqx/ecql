@@ -215,7 +215,7 @@ parse_received_data(ClientPid, Data, ParserFun) ->
         {more, NewParserFun} ->
             {ok, NewParserFun};
         {ok, Frame, Rest} ->
-            gen_fsm:send_event(ClientPid, Frame),
+            gen_statem:cast(ClientPid, Frame),
             parse_received_data(ClientPid, Rest, ecql_frame:parser());
         {error, Error} ->
             {error, Error}

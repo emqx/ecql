@@ -70,11 +70,11 @@ t_update(C) ->
 
 t_prepare(C) ->
     {ok, Id} = ecql:prepare(C, "select * from test.tab where first_id = ? and second_id = ?"),
-    {ok, {TableSpec, Columns, Rows}} = ecql:execute(C, Id, [{bigint, 1}, 'secid']).
+    {ok, {_TableSpec, _Columns, _Rows}} = ecql:execute(C, Id, [{bigint, 1}, 'secid']).
 
 t_named_prepare(C) ->
     {ok, _Id} = ecql:prepare(C, select_one, "select * from test.tab where first_id = ? limit 1"), 
-    {ok, {TableSpec, Columns, Rows}} = ecql:execute(C, select_one, [{bigint, 1}]).
+    {ok, {_TableSpec, _Columns, _Rows}} = ecql:execute(C, select_one, [{bigint, 1}]).
 
 -endif.
 
