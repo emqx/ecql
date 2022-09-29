@@ -1,7 +1,4 @@
 PROJECT = ecql
-DEPS = gen_logger
-
-dep_gen_logger = git git://github.com/emqtt/gen_logger.git
 
 ERLC_OPTS += +debug_info
 

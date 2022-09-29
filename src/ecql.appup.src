@@ -1,0 +1,17 @@
+%% -*- mode: erlang -*-
+{"1.0.0",
+  [
+   {"0.5", [
+     {load_module,ecql,brutal_purge,soft_purge,[]}
+     {load_module,ecql_sock,brutal_purge,soft_purge,[ecql]}
+   ]},
+   {<<".*">>, []}
+  ],
+  [
+   {"0.5", [
+     {load_module,ecql,brutal_purge,soft_purge,[]}
+     {load_module,ecql_sock,brutal_purge,soft_purge,[ecql]}
+   ]},
+   {<<".*">>, []}
+  ]
+}.

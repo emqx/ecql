@@ -80,7 +80,7 @@ query_test() ->
                          message = #ecql_query{query = <<"select">>,
                                                consistency = ?CL_ONE,
                                                values = [<<1:?int>>, <<2:?int>>, <<3:?int>>]}},
-    {Frame3, State3} = ecql_proto:query(<<"select">>, ?CL_ONE, [{int, 1}, {int, 2}, {int, 3}], State2),
+    {Frame3, _State3} = ecql_proto:query(<<"select">>, ?CL_ONE, [{int, 1}, {int, 2}, {int, 3}], State2),
     ?assertEqual(FrameC, Frame3).
 
 execute_test() ->
@@ -89,14 +89,14 @@ execute_test() ->
                          opcode = ?OP_EXECUTE,
                          message = #ecql_execute{id = <<"abc">>}},
 
-    {Frame1, State1} = ecql_proto:execute(<<"abc">>, State),
+    {Frame1, _State1} = ecql_proto:execute(<<"abc">>, State),
     ?assertEqual(FrameA, Frame1),
 
     FrameB = #ecql_frame{stream = ecql_proto:stream_id(State),
                          opcode = ?OP_EXECUTE,
                          message = #ecql_execute{id = <<"abc">>, query = #ecql_query{consistency = ?CL_TWO}}},
 
-    {Frame2, State2} = ecql_proto:execute(<<"abc">>, ?CL_TWO, State),
+    {Frame2, _State2} = ecql_proto:execute(<<"abc">>, ?CL_TWO, State),
     ?assertEqual(FrameB, Frame2).
 
 register_test() ->
