@@ -12,3 +12,6 @@ rel/example_project
 ecql.d
 xrefr
 erlang.mk
+_build
+rebar.lock
+*.swp

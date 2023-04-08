@@ -1,22 +1,46 @@
-PROJECT = ecql
-DEPS = gen_logger
+all: eunit cover
 
-dep_gen_logger = git git://github.com/emqtt/gen_logger.git
+.PHONY: compile
+compile: deps
+	@rebar3 compile
 
-ERLC_OPTS += +debug_info
+.PHONY: deps
+deps:
+	@rebar3 get-deps
 
-$(shell [ -f erlang.mk ] || curl -s -o erlang.mk https://raw.githubusercontent.com/emqx/erlmk/master/erlang.mk)
-include erlang.mk
+.PHONY: edoc
+edoc:
+	@rebar3 edoc
 
-DIALYZER = dialyzer
-BASE_DIR = $(shell pwd)
-PLT = $(BASE_DIR)/.ecql_dialyzer.plt
-
-.PHONY: buid_plt dialyzer
-
-build_plt: compile
-	dialyzer --build_plt --output_plt $(PLT) --apps erts kernel stdlib ssl ./deps/*/ebin ./ebin
-
+.PHONY: dialyzer
 dialyzer: compile
-	dialyzer -Wno_return --plt $(PLT) ./ebin
+	@rebar3 dialyzer
 
+.PHONY: eunit
+eunit:
+	@rebar3 eunit -v
+
+.PHONY: clean
+clean:
+	@rebar3 clean
+	@rm -rf test-data
+
+.PHONY: xref
+xref: compile
+	@rebar3 xref
+
+.PHONY: hex
+hex: clean
+	@rebar3 hex publish
+
+.PHONY: cover
+cover:
+	@rebar3 cover -v
+
+.PHONY: coveralls
+coveralls:
+	@rebar3 coveralls send
+
+.PHONY: hex-publish
+hex-publish:
+	@rebar3 hex publish

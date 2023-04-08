@@ -32,6 +32,13 @@
                   {username, "cassandra"},
                   {password, "cassandra"}]).
 
+%% requires
+%% - A running cassandra instance
+%%   docker run --rm --name cassandra -p 9042:9042 cassandra:3.11.14
+%% - Prepared keyspace and table
+%%   CREATE KEYSPACE test WITH replication = {'SimpleStrategy', 'replication_factor': 1};
+%%   CREATE TABLE test.tab (first_id bigint, second_id text, col_text text, col_map map<text, text>, PRIMARY KEY (first_id, second_id));
+
 ecql_test_() ->
     {foreach, fun setup/0, fun cleanup/1, [fun tests/1]}.
 
