@@ -95,7 +95,18 @@ t_batch_query(C) ->
             {insert, [{bigint, 5}, 'batch-secid-5']}
            ],
     ok = ecql:batch(C, Rows),
-    ok = ecql:batch(C, [{"insert into test.tab (first_id, second_id) values (?, ?)", [{bigint, 6}, 'batch-secid-6']}]).
+    ok = ecql:batch(C, [{"insert into test.tab (first_id, second_id) values (?, ?)", [{bigint, 6}, 'batch-secid-6']}]),
+
+    %% async
+    {ok, Ref} = ecql:async_batch(C, Rows),
+    receive
+        {async_cql_reply, Ref, ok} ->
+            ok;
+        {async_cql_reply, Ref, Error} ->
+            throw(Error)
+    after
+        1000 -> error(timeout)
+    end.
 
 -endif.
 

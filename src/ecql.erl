@@ -40,6 +40,7 @@
          prepare/2, prepare/3, execute/2, execute/3, execute/4,
          async_execute/2, async_execute/3, async_execute/4,
          batch/2, batch/3,
+         async_batch/2, async_batch/3,
          close/1]).
 
 %% gen_fsm Function Exports
@@ -200,6 +201,15 @@ batch(CPid, Queries) ->
 batch(CPid, Queries, CL) when is_atom(CL) ->
     QObj = #ecql_batch{queries = Queries, consistency = ecql_cl:value(CL)},
     gen_fsm:sync_send_event(CPid, {batch, QObj}).
+
+-spec async_batch(pid(), batch()) -> {ok, reference()} | {error, any()}.
+async_batch(CPid, Queries) ->
+    async_batch(CPid, Queries, one).
+
+-spec async_batch(pid(), batch(), atom()) -> {ok, reference()} | {error, any()}.
+async_batch(CPid, Queries, CL) when is_atom(CL) ->
+    QObj = #ecql_batch{queries = Queries, consistency = ecql_cl:value(CL)},
+    gen_fsm:sync_send_event(CPid, {async_batch, QObj}).
 
 %% @doc Close the client.
 -spec close(pid()) -> ok.
@@ -364,17 +374,16 @@ established({async_executue, Id, Query}, From, State = #state{proto_state = Prot
 
 established({batch, Query}, From, State = #state{prepared = Prepared, proto_state = ProtoSate})
         when is_record(Query, ecql_batch) ->
-    Queries1 =
-        lists:map(
-          fun({QueryOrId, Values}) ->
-                  {Kind, QueryOrId1} =
-                    case dict:find(QueryOrId, Prepared) of
-                        {ok, Id} -> {?BATCH_QUERY_KIND_PREPARED_ID, Id};
-                        error -> {?BATCH_QUERY_KIND_NORMAL_QUERY, iolist_to_binary(QueryOrId)}
-                    end,
-                  #ecql_batch_query{kind = Kind, query_or_id = QueryOrId1, values = Values}
-          end, Query#ecql_batch.queries),
-    request(From, fun ecql_proto:batch/2, [Query#ecql_batch{queries = Queries1}, ProtoSate], State);
+    Queries = pre_format_queries(Query#ecql_batch.queries, Prepared),
+    request(From, fun ecql_proto:batch/2, [Query#ecql_batch{queries = Queries}, ProtoSate], State);
+
+established({async_batch, Query}, From, State = #state{prepared = Prepared, proto_state = ProtoSate})
+        when is_record(Query, ecql_batch) ->
+    AsyncRef = make_ref(),
+    Queries = pre_format_queries(Query#ecql_batch.queries, Prepared),
+    {_, _, NewState} = request({async, AsyncRef, From}, fun ecql_proto:batch/2,
+                               [Query#ecql_batch{queries = Queries}, ProtoSate], State),
+    {reply, {ok, AsyncRef}, established, NewState};
 
 established(_Event, _From, State) ->
     {reply, {error, unsupported}, established, State}.
@@ -496,10 +505,7 @@ received(Frame = ?RESULT_FRAME(_OpCode, Resp), State) ->
 response(StreamId, Response, State = #state{requests = Reqs}) ->
     case dict:find(StreamId, Reqs) of
         {ok, {async, Ref, {From, _}}} ->
-            case Response =:= ok of
-                true  -> ignore;
-                false -> From ! {async_cql_reply, Ref, Response}
-            end,
+            From ! {async_cql_reply, Ref, Response},
             State#state{requests = dict:erase(StreamId, Reqs)};
         {ok, From} ->
             gen_fsm:reply(From, Response),
@@ -521,3 +527,12 @@ auth_token(Username, undefined) ->
 auth_token(Username, Password) ->
     <<0, Username/binary, 0, Password/binary>>.
 
+pre_format_queries(Queries, Prepared) ->
+    lists:map(fun({QueryOrId, Values}) ->
+        {Kind, QueryOrId1} =
+            case dict:find(QueryOrId, Prepared) of
+                {ok, Id} -> {?BATCH_QUERY_KIND_PREPARED_ID, Id};
+                error -> {?BATCH_QUERY_KIND_NORMAL_QUERY, iolist_to_binary(QueryOrId)}
+            end,
+        #ecql_batch_query{kind = Kind, query_or_id = QueryOrId1, values = Values}
+    end, Queries).
