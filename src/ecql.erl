@@ -36,11 +36,11 @@
 %% API Function Exports
 -export([connect/0, connect/1, options/1,
          query/2, query/3, query/4,
-         async_query/2, async_query/3, async_query/4,
+         async_query/2, async_query/3, async_query/4, async_query/5,
          prepare/2, prepare/3, execute/2, execute/3, execute/4,
          async_execute/2, async_execute/3, async_execute/4,
          batch/2, batch/3,
-         async_batch/2, async_batch/3,
+         async_batch/2, async_batch/3, async_batch/4,
          close/1]).
 
 %% gen_fsm Function Exports
@@ -50,6 +50,9 @@
 
 -export([init/1, handle_event/3, handle_sync_event/4, handle_info/3,
          terminate/3, code_change/4]).
+
+%% internal exports
+-export([default_response_callback/3]).
 
 -type host() :: inet:ip_address() | inet:hostname().
 
@@ -93,6 +96,10 @@
 
 -type batch() :: [batch_query()].
 -type batch_query() :: {query_string() | prepared_id(), Values :: list()}.
+
+-type callback() :: function()
+                  | {function(), Args :: list()}
+                  | {module(), function(), Args :: list()}.
 
 -export_type([cql_result/0]).
 
@@ -140,20 +147,26 @@ query(CPid, Query, Values, CL) when is_atom(CL) ->
     gen_fsm:sync_send_event(CPid,{query, QObj}).
 
 %% @doc Query Asynchronously.
--spec async_query(pid(), query_string()) -> {ok, reference()} | {error, any()}.
+-spec async_query(pid(), query_string()) -> ok | {ok, reference()} | {error, any()}.
 async_query(CPid, Query) ->
-    gen_fsm:sync_send_event(CPid, {async_query, #ecql_query{query = iolist_to_binary(Query)}}).
+    gen_fsm:sync_send_event(CPid, {async_query, #ecql_query{query = iolist_to_binary(Query)}, undefined}).
 
--spec async_query(pid(), query_string(), list()) -> {ok, reference()} | {error, any()}.
+-spec async_query(pid(), query_string(), list()) -> ok | {ok, reference()} | {error, any()}.
 async_query(CPid, Query, Values) ->
-    async_query(CPid, Query, Values, one).
+    async_query(CPid, Query, Values, one, undefined).
 
--spec async_query(pid(), query_string(), list(), atom()) -> {ok, reference()} | {error, any()}.
+-spec async_query(pid(), query_string(), list(), atom() | callback()) -> ok | {ok, reference()} | {error, any()}.
 async_query(CPid, Query, Values, CL) when is_atom(CL) ->
+    async_query(CPid, Query, Values, CL, undefined);
+async_query(CPid, Query, Values, Callback) ->
+    async_query(CPid, Query, Values, one, Callback).
+
+-spec async_query(pid(), query_string(), list(), atom(), callback()) -> ok | {ok, reference()} | {error, any()}.
+async_query(CPid, Query, Values, CL, Callback) when is_atom(CL) ->
     QObj = #ecql_query{query = iolist_to_binary(Query),
                        consistency = ecql_cl:value(CL),
                        values = Values},
-    gen_fsm:sync_send_event(CPid,{async_query, QObj}).
+    gen_fsm:sync_send_event(CPid,{async_query, QObj, Callback}).
 
 %% @doc Prepare.
 -spec prepare(pid(), query_string()) -> {ok, binary()} | {error, any()}.
@@ -180,18 +193,24 @@ execute(CPid, Id, Values, CL) when ?PREPARED(Id) andalso is_atom(CL) ->
     gen_fsm:sync_send_event(CPid, {execute, Id, QObj}).
 
 %% @doc Execute Asynchronously.
--spec async_execute(pid(), prepared_id()) -> {ok, reference()} | {error, any()}.
+-spec async_execute(pid(), prepared_id()) -> ok | {ok, reference()} | {error, any()}.
 async_execute(CPid, Id) when ?PREPARED(Id) ->
-    gen_fsm:sync_send_event(CPid, {async_execute, Id, #ecql_query{}}).
+    gen_fsm:sync_send_event(CPid, {async_execute, Id, #ecql_query{}, undefined}).
 
--spec async_execute(pid(), prepared_id(), list()) -> {ok, reference()} | {error, any()}.
+-spec async_execute(pid(), prepared_id(), list()) -> ok | {ok, reference()} | {error, any()}.
 async_execute(CPid, Id, Values) when ?PREPARED(Id) andalso is_list(Values) ->
     async_execute(CPid, Id, Values, one).
 
--spec async_execute(pid(), prepared_id(), list(), atom()) -> {ok, reference()} | {error, any()}.
+-spec async_execute(pid(), prepared_id(), list(), atom() | callback()) -> ok | {ok, reference()} | {error, any()}.
 async_execute(CPid, Id, Values, CL) when ?PREPARED(Id) andalso is_atom(CL) ->
+    async_execute(CPid, Id, Values, CL, undefined);
+async_execute(CPid, Id, Values, Callback) when ?PREPARED(Id) ->
+    async_execute(CPid, Id, Values, one, Callback).
+
+-spec async_execute(pid(), prepared_id(), list(), atom(), callback()) -> ok | {ok, reference()} | {error, any()}.
+async_execute(CPid, Id, Values, CL, Callback) when ?PREPARED(Id) andalso is_atom(CL) ->
     QObj = #ecql_query{consistency = ecql_cl:value(CL), values = Values},
-    gen_fsm:sync_send_event(CPid, {async_execute, Id, QObj}).
+    gen_fsm:sync_send_event(CPid, {async_execute, Id, QObj, Callback}).
 
 -spec batch(pid(), batch()) -> ok | {error, any()}.
 batch(CPid, Queries) ->
@@ -202,14 +221,20 @@ batch(CPid, Queries, CL) when is_atom(CL) ->
     QObj = #ecql_batch{queries = Queries, consistency = ecql_cl:value(CL)},
     gen_fsm:sync_send_event(CPid, {batch, QObj}).
 
--spec async_batch(pid(), batch()) -> {ok, reference()} | {error, any()}.
+-spec async_batch(pid(), batch()) -> ok | {ok, reference()} | {error, any()}.
 async_batch(CPid, Queries) ->
-    async_batch(CPid, Queries, one).
+    async_batch(CPid, Queries, one, undefined).
 
--spec async_batch(pid(), batch(), atom()) -> {ok, reference()} | {error, any()}.
+-spec async_batch(pid(), batch(), atom() | callback()) -> ok | {ok, reference()} | {error, any()}.
 async_batch(CPid, Queries, CL) when is_atom(CL) ->
+    async_batch(CPid, Queries, CL, undefined);
+async_batch(CPid, Queries, Callback) ->
+    async_batch(CPid, Queries, one, Callback).
+
+-spec async_batch(pid(), batch(), atom(), callback()) -> ok | {ok, reference()} | {error, any()}.
+async_batch(CPid, Queries, CL, Callback) when is_atom(CL) ->
     QObj = #ecql_batch{queries = Queries, consistency = ecql_cl:value(CL)},
-    gen_fsm:sync_send_event(CPid, {async_batch, QObj}).
+    gen_fsm:sync_send_event(CPid, {async_batch, QObj, Callback}).
 
 %% @doc Close the client.
 -spec close(pid()) -> ok.
@@ -331,10 +356,10 @@ established({query, Query}, From, State = #state{proto_state = ProtoSate})
         when is_record(Query, ecql_query) ->
     request(From, fun ecql_proto:query/2, [Query, ProtoSate], State);
 
-established({async_query, Query}, From, State = #state{proto_state = ProtoSate}) ->
-    AsyncRef = make_ref(),
-    {_, _, NewState} = request({async, AsyncRef, From}, fun ecql_proto:query/2, [Query, ProtoSate], State),
-    {reply, {ok, AsyncRef}, established, NewState};
+established({async_query, Query, Callback}, From, State = #state{proto_state = ProtoSate}) ->
+    {Reply, Callback1} = make_callback(Callback, From),
+    {_, _, NewState} = request({async, Callback1}, fun ecql_proto:query/2, [Query, ProtoSate], State),
+    {reply, Reply, established, NewState};
 
 established({prepare, Query}, From, State = #state{proto_state = ProtoSate}) ->
     request(From, fun ecql_proto:prepare/2, [Query, ProtoSate], State);
@@ -366,24 +391,24 @@ established({execute, Name, Query}, From, State = #state{prepared = Prepared}) w
 established({execute, Id, Query}, From, State = #state{proto_state = ProtoSate}) when is_binary(Id) ->
     request(From, fun ecql_proto:execute/3, [Id, Query, ProtoSate], State);
 
-established({async_executue, Id, Query}, From, State = #state{proto_state = ProtoSate}) ->
-    AsyncRef = make_ref(),
-    {_, _, NewState} = request({async, AsyncRef, From}, fun ecql_proto:execute/3,
+established({async_executue, Id, Query, Callback}, From, State = #state{proto_state = ProtoSate}) ->
+    {Reply, Callback1} = make_callback(Callback, From),
+    {_, _, NewState} = request({async, Callback1}, fun ecql_proto:execute/3,
                                [Id, Query, ProtoSate], State),
-    {reply, {ok, AsyncRef}, established, NewState};
+    {reply, Reply, established, NewState};
 
 established({batch, Query}, From, State = #state{prepared = Prepared, proto_state = ProtoSate})
         when is_record(Query, ecql_batch) ->
     Queries = pre_format_queries(Query#ecql_batch.queries, Prepared),
     request(From, fun ecql_proto:batch/2, [Query#ecql_batch{queries = Queries}, ProtoSate], State);
 
-established({async_batch, Query}, From, State = #state{prepared = Prepared, proto_state = ProtoSate})
+established({async_batch, Query, Callback}, From, State = #state{prepared = Prepared, proto_state = ProtoSate})
         when is_record(Query, ecql_batch) ->
-    AsyncRef = make_ref(),
     Queries = pre_format_queries(Query#ecql_batch.queries, Prepared),
-    {_, _, NewState} = request({async, AsyncRef, From}, fun ecql_proto:batch/2,
+    {Reply, Callback1} = make_callback(Callback, From),
+    {_, _, NewState} = request({async, Callback1}, fun ecql_proto:batch/2,
                                [Query#ecql_batch{queries = Queries}, ProtoSate], State),
-    {reply, {ok, AsyncRef}, established, NewState};
+    {reply, Reply, established, NewState};
 
 established(_Event, _From, State) ->
     {reply, {error, unsupported}, established, State}.
@@ -504,8 +529,8 @@ received(Frame = ?RESULT_FRAME(_OpCode, Resp), State) ->
 
 response(StreamId, Response, State = #state{requests = Reqs}) ->
     case dict:find(StreamId, Reqs) of
-        {ok, {async, Ref, {From, _}}} ->
-            From ! {async_cql_reply, Ref, Response},
+        {ok, {async, Callback}} ->
+            _ = apply_callback_function(Callback, Response),
             State#state{requests = dict:erase(StreamId, Reqs)};
         {ok, From} ->
             gen_fsm:reply(From, Response),
@@ -536,3 +561,26 @@ pre_format_queries(Queries, Prepared) ->
             end,
         #ecql_batch_query{kind = Kind, query_or_id = QueryOrId1, values = Values}
     end, Queries).
+
+%% Result returned at the end of args
+apply_callback_function(F, Result)
+  when is_function(F) ->
+    erlang:apply(F, [Result]);
+apply_callback_function({F, A}, Result)
+  when is_function(F),
+       is_list(A) ->
+    erlang:apply(F, A ++ [Result]);
+apply_callback_function({M, F, A}, Result)
+  when is_atom(M),
+       is_atom(F),
+       is_list(A) ->
+    erlang:apply(M, F, A ++ [Result]).
+
+make_callback(undefined, {From, _}) ->
+    Ref = make_ref(),
+    {{ok, Ref}, {fun ?MODULE:default_response_callback/3, [From, Ref]}};
+make_callback(Callback, _From) ->
+    {ok, Callback}.
+
+default_response_callback(From, Ref, Response) ->
+    From ! {async_cql_reply, Ref, Response}.

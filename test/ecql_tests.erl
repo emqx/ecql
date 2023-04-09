@@ -67,12 +67,29 @@ t_select(C) ->
 
 t_update(C) ->
     ok = ecql:query(C, <<"update test.tab set col_map['keyx'] = 'valuex' where first_id = 1 and second_id = 'secid'">>),
+    %% async - message
     {ok, Ref} = ecql:async_query(C, "select col_text from test.tab"),
     receive
         {async_cql_reply, Ref, {ok, {<<"test.tab">>, [{<<"col_text">>, varchar}], Rows}}} ->
             ?debugFmt("AsyncQuery Rows: ~p~n", [Rows]);
         {async_cql_reply, Ref, Error} ->
             throw(Error)
+    after
+        1000 -> error(timeout)
+    end,
+    %% async - callback
+    Self = self(),
+    Callback =
+        {
+         fun(first_arg, Resp) -> Self ! {async_resp, Resp} end,
+         [first_arg]
+        },
+    ok = ecql:async_query(C, "select col_text from test.tab", [], one, Callback),
+    receive
+        {async_resp, {ok, {<<"test.tab">>, [{<<"col_text">>, varchar}], Rows2}}} ->
+            ?debugFmt("AsyncQuery Rows: ~p~n", [Rows2]);
+        {async_resp, Error1} ->
+            throw(Error1)
     after
         1000 -> error(timeout)
     end.
@@ -97,7 +114,7 @@ t_batch_query(C) ->
     ok = ecql:batch(C, Rows),
     ok = ecql:batch(C, [{"insert into test.tab (first_id, second_id) values (?, ?)", [{bigint, 6}, 'batch-secid-6']}]),
 
-    %% async
+    %% async - message
     {ok, Ref} = ecql:async_batch(C, Rows),
     receive
         {async_cql_reply, Ref, ok} ->
@@ -106,7 +123,23 @@ t_batch_query(C) ->
             throw(Error)
     after
         1000 -> error(timeout)
+    end,
+
+    %% async - callback function
+    Self = self(),
+    Callback =
+        {
+         fun(first_arg, Resp) -> Self ! {async_resp, Resp} end,
+         [first_arg]
+        },
+    ok = ecql:async_batch(C, Rows, one, Callback),
+    receive
+        {async_resp, ok} ->
+            ok;
+        {async_resp, Error1} ->
+            throw(Error1)
+    after
+        1000 -> error(timeout)
     end.
 
 -endif.
-
