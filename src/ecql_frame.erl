@@ -403,21 +403,24 @@ serialize_req(#ecql_execute{id = Id, query = Query}) ->
 
 serialize_req(#ecql_batch{type = Type, queries = Queries,
                           consistency = Consistency,
-                          flags = Flags, with_names = WithNames,
+                          with_names = WithNames,
                           serial_consistency = SerialConsistency,
                           timestamp = Timestamp}) ->
-
     QueriesBin = << <<(serialize_batch_query(Query))/binary>> || Query <- Queries >>,
 
-    Flags = <<0:5, (flag(WithNames))/binary, (flag(SerialConsistency)):1,
-              (flag(Timestamp)):1, 0:1>>,
+    Flags = <<0:4,
+              (flag(WithNames)):1,
+              (flag(Timestamp)):1,
+              (flag(SerialConsistency)):1,
+              0:1>>,
 
-    Parameters = [{serialize_consistency, SerialConsistency},
-                  {timestamp, Timestamp}],
+    Parameters =
+        [{serial_consistency, SerialConsistency}
+         || flag(SerialConsistency) == 1 ] ++
+        [{timestamp, Timestamp} || flag(Timestamp) == 1],
 
     ParamtersBin = << <<(serialize_parameter(Name, Val))/binary>> || {Name, Val} <- Parameters >>,
-
-    <<Type:?byte, (length(Queries)):?short, QueriesBin/binary, Consistency:?short, Flags:?byte, ParamtersBin/binary>>;
+    <<Type:?byte, (length(Queries)):?short, QueriesBin/binary, Consistency:?short, Flags/binary, ParamtersBin/binary>>;
 
 serialize_req(#ecql_register{event_types = EventTypes}) ->
     serialize_string_list(EventTypes).
@@ -426,7 +429,7 @@ serialize_batch_query(#ecql_batch_query{kind = 0, query_or_id = Str, values = Va
     <<0:?byte, (serialize_long_string(Str))/binary, (serialize_batch_query_values(Values))/binary>>;
 
 serialize_batch_query(#ecql_batch_query{kind = 1, query_or_id = Id, values = Values}) ->
-    <<0:?byte, (serialize_short_bytes(Id))/binary, (serialize_batch_query_values(Values))/binary>>.
+    <<1:?byte, (serialize_short_bytes(Id))/binary, (serialize_batch_query_values(Values))/binary>>.
 
 serialize_batch_query_values([]) ->
     <<>>;

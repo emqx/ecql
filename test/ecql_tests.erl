@@ -50,7 +50,9 @@ tests(C) ->
      ?_test(t_select(C)),
      ?_test(t_update(C)),
      ?_test(t_prepare(C)),
-     ?_test(t_named_prepare(C))].
+     ?_test(t_named_prepare(C)),
+     ?_test(t_batch_query(C))
+    ].
 
 cleanup(C) ->
     ecql:close(C).
@@ -77,11 +79,23 @@ t_update(C) ->
 
 t_prepare(C) ->
     {ok, Id} = ecql:prepare(C, "select * from test.tab where first_id = ? and second_id = ?"),
-    {ok, {TableSpec, Columns, Rows}} = ecql:execute(C, Id, [{bigint, 1}, 'secid']).
+    {ok, {_TableSpec, _Columns, _Rows}} = ecql:execute(C, Id, [{bigint, 1}, 'secid']).
 
 t_named_prepare(C) ->
     {ok, _Id} = ecql:prepare(C, select_one, "select * from test.tab where first_id = ? limit 1"), 
-    {ok, {TableSpec, Columns, Rows}} = ecql:execute(C, select_one, [{bigint, 1}]).
+    {ok, {_TableSpec, _Columns, _Rows}} = ecql:execute(C, select_one, [{bigint, 1}]).
+
+t_batch_query(C) ->
+    {ok, _Id} = ecql:prepare(C, insert, "insert into test.tab (first_id, second_id) values (?, ?)"),
+    Rows = [
+            {insert, [{bigint, 1}, 'batch-secid-1']},
+            {insert, [{bigint, 2}, 'batch-secid-2']},
+            {insert, [{bigint, 3}, 'batch-secid-3']},
+            {insert, [{bigint, 4}, 'batch-secid-4']},
+            {insert, [{bigint, 5}, 'batch-secid-5']}
+           ],
+    ok = ecql:batch(C, Rows),
+    ok = ecql:batch(C, [{"insert into test.tab (first_id, second_id) values (?, ?)", [{bigint, 6}, 'batch-secid-6']}]).
 
 -endif.
 

@@ -101,8 +101,16 @@ execute(Id, CL, State) when is_binary(Id) andalso ?IS_CL(CL) ->
 execute(Id, CL, Values, State) when is_binary(Id) andalso ?IS_CL(CL) ->
     execute(Id, #ecql_query{consistency = CL, values = Values}, State).
 
-batch(_, _State) ->
-    throw({error, batch_unsupported}).
+batch(Query, State) when is_record(Query, ecql_batch) ->
+    %% XXX: expose type, flags, with_names?
+    Query1 = Query#ecql_batch{
+               type = ?BATCH_TYPE_LOGGED,
+               queries = [ Q#ecql_batch_query{values = encode_values(Q#ecql_batch_query.values)}
+                          || Q <- Query#ecql_batch.queries],
+               flags = 0,
+               with_names = false
+              },
+    send_with_stream(?REQ_FRAME(?OP_BATCH, Query1), State).
 
 -spec register(list(string()), proto_state()) -> {ecql_frame(), proto_state()}.
 register(EventTypes, State) ->
