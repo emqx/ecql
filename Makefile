@@ -1,4 +1,4 @@
-all: eunit cover
+all: compile
 
 .PHONY: compile
 compile: deps
@@ -15,6 +15,9 @@ edoc:
 .PHONY: dialyzer
 dialyzer: compile
 	@rebar3 dialyzer
+
+.PHONY: tests
+tests: eunit cover
 
 .PHONY: eunit
 eunit:
