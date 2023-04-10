@@ -27,7 +27,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--define(OPTIONS, [{nodes, [{"127.0.0.1", 9042}]},
+-define(OPTIONS, [{nodes, [{"127.0.0.1", 19042}]},
                   {keyspace, "test"},
                   {username, "cassandra"},
                   {password, "cassandra"}]).
@@ -51,7 +51,8 @@ tests(C) ->
      ?_test(t_update(C)),
      ?_test(t_prepare(C)),
      ?_test(t_named_prepare(C)),
-     ?_test(t_batch_query(C))
+     ?_test(t_batch_query(C)),
+     ?_test(t_batch_query_2(C))
     ].
 
 cleanup(C) ->
@@ -141,5 +142,12 @@ t_batch_query(C) ->
     after
         1000 -> error(timeout)
     end.
+
+t_batch_query_2(C) ->
+    %% empty parameters
+    Rows = [
+            {"insert into test.tab (first_id, second_id) values (6, 'batch_query_2')", []}
+           ],
+    ok = ecql:batch(C, Rows).
 
 -endif.

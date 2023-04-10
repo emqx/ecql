@@ -216,6 +216,7 @@ async_execute(CPid, Id, Values, CL, Callback) when ?PREPARED(Id) andalso is_atom
 batch(CPid, Queries) ->
     batch(CPid, Queries, one).
 
+%% @doc only UPDATE, INSERT and DELETE statements are allowed
 -spec batch(pid(), batch(), atom()) -> ok | {error, any()}.
 batch(CPid, Queries, CL) when is_atom(CL) ->
     QObj = #ecql_batch{queries = Queries, consistency = ecql_cl:value(CL)},
@@ -391,7 +392,7 @@ established({execute, Name, Query}, From, State = #state{prepared = Prepared}) w
 established({execute, Id, Query}, From, State = #state{proto_state = ProtoSate}) when is_binary(Id) ->
     request(From, fun ecql_proto:execute/3, [Id, Query, ProtoSate], State);
 
-established({async_executue, Id, Query, Callback}, From, State = #state{proto_state = ProtoSate}) ->
+established({async_execute, Id, Query, Callback}, From, State = #state{proto_state = ProtoSate}) ->
     {Reply, Callback1} = make_callback(Callback, From),
     {_, _, NewState} = request({async, Callback1}, fun ecql_proto:execute/3,
                                [Id, Query, ProtoSate], State),

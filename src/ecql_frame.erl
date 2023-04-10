@@ -432,7 +432,7 @@ serialize_batch_query(#ecql_batch_query{kind = 1, query_or_id = Id, values = Val
     <<1:?byte, (serialize_short_bytes(Id))/binary, (serialize_batch_query_values(Values))/binary>>.
 
 serialize_batch_query_values([]) ->
-    <<>>;
+    <<0:?short>>;
 serialize_batch_query_values([H|_] = Values) when is_tuple(H) ->
     ValuesBin = << <<(serialize_string(Name))/binary, (serialize_bytes(Val))/binary>> || {Name, Val} <- Values >>,
     << (length(Values)):?short, ValuesBin/binary>>;
