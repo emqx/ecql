@@ -27,7 +27,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--define(OPTIONS, [{nodes, [{"127.0.0.1", 19042}]},
+-define(OPTIONS, [{nodes, [{"127.0.0.1", 9042}]},
                   {keyspace, "test"},
                   {username, "cassandra"},
                   {password, "cassandra"}]).
