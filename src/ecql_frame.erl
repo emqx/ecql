@@ -1,42 +1,43 @@
-%%%-----------------------------------------------------------------------------
-%%% Copyright (c) 2015-2016 Feng Lee <feng@emqtt.io>. All Rights Reserved.
-%%%
-%%% Permission is hereby granted, free of charge, to any person obtaining a copy
-%%% of this software and associated documentation files (the "Software"), to deal
-%%% in the Software without restriction, including without limitation the rights
-%%% to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-%%% copies of the Software, and to permit persons to whom the Software is
-%%% furnished to do so, subject to the following conditions:
-%%%
-%%% The above copyright notice and this permission notice shall be included in all
-%%% copies or substantial portions of the Software.
-%%%
-%%% THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-%%% IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-%%% FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-%%% AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-%%% LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-%%% OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-%%% SOFTWARE.
-%%%-----------------------------------------------------------------------------
-%%% @author Feng Lee <feng@emqtt.io>
-%%%
-%%% @doc CQL Frame:
-%%%
-%%% 0         8        16        24        32         40
-%%% +---------+---------+---------+---------+---------+
-%%% | version |  flags  |      stream       | opcode  |
-%%% +---------+---------+---------+---------+---------+
-%%% |                length                 |
-%%% +---------+---------+---------+---------+
-%%% |                                       |
-%%% .            ...  body ...              .
-%%% .                                       .
-%%% .                                       .
-%%% +----------------------------------------
-%%%
-%%% @end
-%%%-----------------------------------------------------------------------------
+%%-----------------------------------------------------------------------------
+%% Copyright (c) 2015 Feng Lee <feng@emqtt.io>. All Rights Reserved.
+%%
+%% Permission is hereby granted, free of charge, to any person obtaining a copy
+%% of this software and associated documentation files (the "Software"), to deal
+%% in the Software without restriction, including without limitation the rights
+%% to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+%% copies of the Software, and to permit persons to whom the Software is
+%% furnished to do so, subject to the following conditions:
+%%
+%% The above copyright notice and this permission notice shall be included in all
+%% copies or substantial portions of the Software.
+%%
+%% THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+%% IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+%% FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+%% AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+%% LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+%% OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+%% SOFTWARE.
+
+%%-----------------------------------------------------------------------------
+%% @author Feng Lee <feng@emqtt.io>
+%%
+%% @doc CQL Frame:
+%%
+%% 0         8        16        24        32         40
+%% +---------+---------+---------+---------+---------+
+%% | version |  flags  |      stream       | opcode  |
+%% +---------+---------+---------+---------+---------+
+%% |                length                 |
+%% +---------+---------+---------+---------+
+%% |                                       |
+%% .            ...  body ...              .
+%% .                                       .
+%% .                                       .
+%% +----------------------------------------
+%%
+%% @end
+%%-----------------------------------------------------------------------------
 
 -module(ecql_frame).
 
@@ -80,7 +81,7 @@ parse(<<?VER_RESP:?byte, Flags:?byte, Stream:?short, OpCode:?byte, Length:32/big
                                 stream = Stream, opcode = OpCode,
                                 length = Length});
 
-parse(Bin, Cont) ->
+parse(Bin, Cont) when is_function(Cont) ->
     Cont(Bin).
 
 parse_body(Bin, Frame = #ecql_frame{length = Len}) when size(Bin) < Len ->
@@ -402,21 +403,24 @@ serialize_req(#ecql_execute{id = Id, query = Query}) ->
 
 serialize_req(#ecql_batch{type = Type, queries = Queries,
                           consistency = Consistency,
-                          flags = Flags, with_names = WithNames,
+                          with_names = WithNames,
                           serial_consistency = SerialConsistency,
                           timestamp = Timestamp}) ->
-
     QueriesBin = << <<(serialize_batch_query(Query))/binary>> || Query <- Queries >>,
 
-    Flags = <<0:5, (flag(WithNames))/binary, (flag(SerialConsistency)):1,
-              (flag(Timestamp)):1, 0:1>>,
+    Flags = <<0:4,
+              (flag(WithNames)):1,
+              (flag(Timestamp)):1,
+              (flag(SerialConsistency)):1,
+              0:1>>,
 
-    Parameters = [{serialize_consistency, SerialConsistency},
-                  {timestamp, Timestamp}],
+    Parameters =
+        [{serial_consistency, SerialConsistency}
+         || flag(SerialConsistency) == 1 ] ++
+        [{timestamp, Timestamp} || flag(Timestamp) == 1],
 
     ParamtersBin = << <<(serialize_parameter(Name, Val))/binary>> || {Name, Val} <- Parameters >>,
-
-    <<Type:?byte, (length(Queries)):?short, QueriesBin/binary, Consistency:?short, Flags:?byte, ParamtersBin/binary>>;
+    <<Type:?byte, (length(Queries)):?short, QueriesBin/binary, Consistency:?short, Flags/binary, ParamtersBin/binary>>;
 
 serialize_req(#ecql_register{event_types = EventTypes}) ->
     serialize_string_list(EventTypes).
@@ -425,10 +429,10 @@ serialize_batch_query(#ecql_batch_query{kind = 0, query_or_id = Str, values = Va
     <<0:?byte, (serialize_long_string(Str))/binary, (serialize_batch_query_values(Values))/binary>>;
 
 serialize_batch_query(#ecql_batch_query{kind = 1, query_or_id = Id, values = Values}) ->
-    <<0:?byte, (serialize_short_bytes(Id))/binary, (serialize_batch_query_values(Values))/binary>>.
+    <<1:?byte, (serialize_short_bytes(Id))/binary, (serialize_batch_query_values(Values))/binary>>.
 
 serialize_batch_query_values([]) ->
-    <<>>;
+    <<0:?short>>;
 serialize_batch_query_values([H|_] = Values) when is_tuple(H) ->
     ValuesBin = << <<(serialize_string(Name))/binary, (serialize_bytes(Val))/binary>> || {Name, Val} <- Values >>,
     << (length(Values)):?short, ValuesBin/binary>>;
