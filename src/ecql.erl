@@ -100,7 +100,8 @@
 -type callback() :: function()
                   | {function(), Args :: list()}
                   | {module(), function(), Args :: list()}
-                  | undefined.
+                  | undefined
+                  | default_async_callback.
 
 -export_type([cql_result/0]).
 
@@ -150,15 +151,18 @@ query(CPid, Query, Values, CL) when is_atom(CL) ->
 %% @doc Query Asynchronously.
 -spec async_query(pid(), query_string()) -> ok | {ok, reference()} | {error, any()}.
 async_query(CPid, Query) ->
-    gen_fsm:sync_send_event(CPid, {async_query, #ecql_query{query = iolist_to_binary(Query)}, undefined}).
+    gen_fsm:sync_send_event(
+      CPid,
+      {async_query, #ecql_query{query = iolist_to_binary(Query)}, default_async_callback}
+     ).
 
 -spec async_query(pid(), query_string(), list()) -> ok | {ok, reference()} | {error, any()}.
 async_query(CPid, Query, Values) ->
-    async_query(CPid, Query, Values, one, undefined).
+    async_query(CPid, Query, Values, one, default_async_callback).
 
 -spec async_query(pid(), query_string(), list(), atom() | callback()) -> ok | {ok, reference()} | {error, any()}.
 async_query(CPid, Query, Values, CL) when is_atom(CL) ->
-    async_query(CPid, Query, Values, CL, undefined);
+    async_query(CPid, Query, Values, CL, default_async_callback);
 async_query(CPid, Query, Values, Callback) ->
     async_query(CPid, Query, Values, one, Callback).
 
@@ -196,7 +200,7 @@ execute(CPid, Id, Values, CL) when ?PREPARED(Id) andalso is_atom(CL) ->
 %% @doc Execute Asynchronously.
 -spec async_execute(pid(), prepared_id()) -> ok | {ok, reference()} | {error, any()}.
 async_execute(CPid, Id) when ?PREPARED(Id) ->
-    gen_fsm:sync_send_event(CPid, {async_execute, Id, #ecql_query{}, undefined}).
+    gen_fsm:sync_send_event(CPid, {async_execute, Id, #ecql_query{}, default_async_callback}).
 
 -spec async_execute(pid(), prepared_id(), list()) -> ok | {ok, reference()} | {error, any()}.
 async_execute(CPid, Id, Values) when ?PREPARED(Id) andalso is_list(Values) ->
@@ -204,7 +208,7 @@ async_execute(CPid, Id, Values) when ?PREPARED(Id) andalso is_list(Values) ->
 
 -spec async_execute(pid(), prepared_id(), list(), atom() | callback()) -> ok | {ok, reference()} | {error, any()}.
 async_execute(CPid, Id, Values, CL) when ?PREPARED(Id) andalso is_atom(CL) ->
-    async_execute(CPid, Id, Values, CL, undefined);
+    async_execute(CPid, Id, Values, CL, default_async_callback);
 async_execute(CPid, Id, Values, Callback) when ?PREPARED(Id) ->
     async_execute(CPid, Id, Values, one, Callback).
 
@@ -225,11 +229,11 @@ batch(CPid, Queries, CL) when is_atom(CL) ->
 
 -spec async_batch(pid(), batch()) -> ok | {ok, reference()} | {error, any()}.
 async_batch(CPid, Queries) ->
-    async_batch(CPid, Queries, one, undefined).
+    async_batch(CPid, Queries, one, default_async_callback).
 
 -spec async_batch(pid(), batch(), atom() | callback()) -> ok | {ok, reference()} | {error, any()}.
 async_batch(CPid, Queries, CL) when is_atom(CL) ->
-    async_batch(CPid, Queries, CL, undefined);
+    async_batch(CPid, Queries, CL, default_async_callback);
 async_batch(CPid, Queries, Callback) ->
     async_batch(CPid, Queries, one, Callback).
 
@@ -574,6 +578,8 @@ pre_format_queries(Queries, Prepared) ->
     end, Queries).
 
 %% Result returned at the end of args
+apply_callback_function(undefined, _Result) ->
+    ok;
 apply_callback_function(F, Result)
   when is_function(F) ->
     erlang:apply(F, [Result]);
@@ -587,7 +593,7 @@ apply_callback_function({M, F, A}, Result)
        is_list(A) ->
     erlang:apply(M, F, A ++ [Result]).
 
-make_callback(undefined, {From, _}) ->
+make_callback(default_async_callback, {From, _}) ->
     Ref = make_ref(),
     {{ok, Ref}, {fun ?MODULE:default_response_callback/3, [From, Ref]}};
 make_callback(Callback, _From) ->
