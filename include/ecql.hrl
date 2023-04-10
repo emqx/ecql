@@ -113,7 +113,7 @@
                      stream  :: stream_id(),
                      opcode  :: opcode(),
                      length  :: pos_integer(),
-                     body    :: binary(),
+                     body    :: undefined | binary(),
                      message}).
 
 -type ecql_frame() :: #ecql_frame{}.
@@ -168,7 +168,7 @@
 -record(ecql_batch_query, {kind, query_or_id, values}).
 
 -record(ecql_batch, {type, queries :: [#ecql_batch_query{}],
-                     consistency, flags, with_names :: boolean(),
+                     consistency, flags, with_names = false :: boolean(),
                      serial_consistency, timestamp}).
 
 -record(ecql_register, {event_types :: [binary()]}).

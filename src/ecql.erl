@@ -65,18 +65,18 @@
                 | {timeout,  timeout()}.
 
 -record(state, {nodes     :: [{host(), inet:port_number()}],
-                username  :: binary(),
-                password  :: binary(),
-                keyspace  :: binary(),
+                username  :: undefined | binary(),
+                password  :: undefined | binary(),
+                keyspace  :: undefined | binary(),
                 transport :: tcp | ssl,
-                socket    :: inet:socket(),
-                receiver  :: pid(),
-                callers   :: list(),
+                socket    :: undefined | inet:socket(),
+                receiver  :: undefined | pid(),
+                callers   = [] :: list(),
                 requests  :: dict:dict(),
                 prepared  :: dict:dict(),
                 ssl_opts  :: [ssl:ssl_option()],
                 tcp_opts  :: [gen_tcp:connect_option()],
-                compression :: boolean(),
+                compression = false :: boolean(),
                 proto_state}).
 
 -define(LOG(Level, Format, Args),
@@ -99,7 +99,8 @@
 
 -type callback() :: function()
                   | {function(), Args :: list()}
-                  | {module(), function(), Args :: list()}.
+                  | {module(), function(), Args :: list()}
+                  | undefined.
 
 -export_type([cql_result/0]).
 
@@ -111,7 +112,7 @@
 -spec connect() -> {ok, pid()} | {error, any()}.
 connect() -> connect([]).
 
--spec connect([option()]) -> {ok, pid()} | {error, any()}.
+-spec connect([option()] | pid()) -> {ok, pid()} | {error, any()}.
 connect(Opts) when is_list(Opts) ->
     case gen_fsm:start_link(?MODULE, [Opts], []) of
         {ok, CPid}     -> connect(CPid);

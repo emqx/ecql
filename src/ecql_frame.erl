@@ -81,7 +81,7 @@ parse(<<?VER_RESP:?byte, Flags:?byte, Stream:?short, OpCode:?byte, Length:32/big
                                 stream = Stream, opcode = OpCode,
                                 length = Length});
 
-parse(Bin, Cont) ->
+parse(Bin, Cont) when is_function(Cont) ->
     Cont(Bin).
 
 parse_body(Bin, Frame = #ecql_frame{length = Len}) when size(Bin) < Len ->
