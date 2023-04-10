@@ -392,7 +392,16 @@ established({execute, Name, Query}, From, State = #state{prepared = Prepared}) w
 established({execute, Id, Query}, From, State = #state{proto_state = ProtoSate}) when is_binary(Id) ->
     request(From, fun ecql_proto:execute/3, [Id, Query, ProtoSate], State);
 
-established({async_execute, Id, Query, Callback}, From, State = #state{proto_state = ProtoSate}) ->
+established({async_execute, Name, Query, Callback}, From, State = #state{prepared = Prepared}) when is_atom(Name) ->
+    case dict:find(Name, Prepared) of
+        {ok, Id} ->
+            established({async_execute, Id, Query, Callback}, From, State);
+        error ->
+            {reply, {error, not_prepared}, established, State}
+    end;
+
+established({async_execute, Id, Query, Callback}, From, State = #state{proto_state = ProtoSate})
+  when is_binary(Id) ->
     {Reply, Callback1} = make_callback(Callback, From),
     {_, _, NewState} = request({async, Callback1}, fun ecql_proto:execute/3,
                                [Id, Query, ProtoSate], State),

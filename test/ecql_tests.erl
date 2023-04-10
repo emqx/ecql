@@ -101,7 +101,15 @@ t_prepare(C) ->
 
 t_named_prepare(C) ->
     {ok, _Id} = ecql:prepare(C, select_one, "select * from test.tab where first_id = ? limit 1"), 
-    {ok, {_TableSpec, _Columns, _Rows}} = ecql:execute(C, select_one, [{bigint, 1}]).
+    {ok, {_TableSpec, _Columns, _Rows}} = ecql:execute(C, select_one, [{bigint, 1}]),
+
+    {ok, Ref} = ecql:async_execute(C, select_one, [{bigint, 1}]),
+    receive
+        {async_cql_reply, Ref, {ok, {<<"test.tab">>, _Columns, _Rows}}} ->
+            ok;
+        {async_cql_reply, Ref, Error} ->
+            throw(Error)
+    end.
 
 t_batch_query(C) ->
     {ok, _Id} = ecql:prepare(C, insert, "insert into test.tab (first_id, second_id) values (?, ?)"),
