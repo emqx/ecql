@@ -1,4 +1,4 @@
-# Erlang Cassandra CQL Driver [![Build Status](https://travis-ci.org/emqtt/ecql.svg?branch=master)](https://travis-ci.org/emqtt/ecql)
+# Erlang Cassandra CQL Driver [![Build Status](https://github.com/emqx/ecql/actions/workflows/main.yml/badge.svg)](https://github.com/emqx/ecql/actions/workflows/main.yml)
 
 Cassandra Native CQL Driver written in Erlang/OTP.
 
