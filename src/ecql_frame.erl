@@ -240,9 +240,9 @@ parse_column(_GlobalTabSpec, 0, Bin, Acc) ->
     {lists:reverse(Acc), Bin};
 parse_column(true, N, Bin, Acc) ->
     {Column, Rest} = parse_string(Bin),
-    {Type, Rest1} = parse_type(Rest), 
+    {Type, Rest1} = parse_type(Rest),
     parse_column(true, N - 1, Rest1, [{Column, Type}|Acc]);
-    
+
 parse_column(false, N, Bin, Acc) ->
     {_Keyspace, Rest} = parse_string(Bin),
     {_Table, Rest1} = parse_string(Rest),
@@ -372,7 +372,7 @@ serialize(Frame) ->
 serialize(body, Frame = #ecql_frame{message = Req}) ->
     Body = serialize_req(Req),
     Frame#ecql_frame{length = size(Body), body = Body};
-    
+
 serialize(header, #ecql_frame{version = Version,
                               flags   = Flags,
                               stream  = Stream,
@@ -387,7 +387,7 @@ serialize_req(#ecql_startup{version = Ver, compression = Comp}) ->
     serialize_string_map([{<<"CQL_VERSION">>, Ver}, {<<"COMPRESSION">>, Comp}]);
 
 serialize_req(#ecql_auth_response{token = Token}) ->
-    serialize_bytes(Token);
+    serialize_bytes(ecql_secret:unwrap(Token));
 
 serialize_req(#ecql_options{}) ->
     <<>>;
@@ -534,4 +534,3 @@ flag(_Val)      -> 1.
 
 bool(1) -> true;
 bool(0) -> false.
-
