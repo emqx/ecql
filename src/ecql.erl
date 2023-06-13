@@ -66,7 +66,7 @@
 
 -record(state, {nodes     :: [{host(), inet:port_number()}],
                 username  :: undefined | binary(),
-                password  :: undefined | binary(),
+                password  :: ecql_secret:t(undefined | binary()),
                 keyspace  :: undefined | binary(),
                 transport :: tcp | ssl,
                 socket    :: undefined | inet:socket(),
@@ -267,7 +267,7 @@ init_opt([{nodes, Nodes} | Opts], State) ->
 init_opt([{username, Username}| Opts], State) ->
     init_opt(Opts, State#state{username = iolist_to_binary(Username)});
 init_opt([{password, Password}| Opts], State) ->
-    init_opt(Opts, State#state{password = iolist_to_binary(Password)});
+    init_opt(Opts, State#state{password = ecql_secret:wrap(iolist_to_binary(Password))});
 init_opt([{keyspace, Keyspace}| Opts], State) ->
     init_opt(Opts, State#state{keyspace = iolist_to_binary(Keyspace)});
 init_opt([ssl | Opts], State) ->
@@ -303,7 +303,8 @@ waiting_for_ready(?RESP_FRAME(?OP_ERROR, #ecql_error{code = Code, message = Mess
 
 waiting_for_ready(?RESP_FRAME(StreamId, ?OP_AUTHENTICATE, #ecql_authenticate{class = ?PASSWORD_AUTHENTICATOR}),
                   State = #state{username = Username, password = Password, proto_state = ProtoState}) ->
-    Token = auth_token(Username, Password),
+    %% The token also is plain, hence needs to wrap too
+    Token = ecql_secret:map(fun(Pw) -> auth_token(Username, Pw) end, Password),
     {_Frame, NewProtoState} = ecql_proto:auth_response(StreamId, Token, ProtoState),
     next_state(waiting_for_auth, State#state{proto_state = NewProtoState});
 
@@ -324,9 +325,9 @@ waiting_for_auth(?RESP_FRAME(?OP_AUTH_CHALLENGE, #ecql_auth_challenge{token = To
     ?LOG(error, "Auth Challenge: ~p", [Token]),
     shutdown(password_error, State#state{callers = reply(connect, {error, password_error}, Callers)});
 
-waiting_for_auth(?RESP_FRAME(?OP_AUTH_SUCCESS, #ecql_auth_success{token = Token}),
+waiting_for_auth(?RESP_FRAME(?OP_AUTH_SUCCESS, #ecql_auth_success{token = _Token}),
                  State = #state{callers = Callers}) ->
-    ?LOG(info, "Auth Success: ~p", [Token]),
+    ?LOG(info, "Auth Success: ~p", [<<"******">>]),
     next_state(established, State#state{callers = reply(connect, ok, Callers)});
 
 waiting_for_auth(?RESP_FRAME(?OP_ERROR, #ecql_error{message = Message}),
