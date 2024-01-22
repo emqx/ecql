@@ -112,11 +112,11 @@ t_named_prepare(C) ->
     end.
 
 t_batch_query(C) ->
-    {ok, _Id} = ecql:prepare(C, insert, "insert into test.tab (first_id, second_id) values (?, ?)"),
+    {ok, Id} = ecql:prepare(C, insert, "insert into test.tab (first_id, second_id) values (?, ?)"),
     Rows = [
-            {insert, [{bigint, 1}, 'batch-secid-1']},
+            {Id, [{bigint, 1}, 'batch-secid-1']},
             {insert, [{bigint, 2}, 'batch-secid-2']},
-            {insert, [{bigint, 3}, 'batch-secid-3']},
+            {Id, [{bigint, 3}, 'batch-secid-3']},
             {insert, [{bigint, 4}, 'batch-secid-4']},
             {insert, [{bigint, 5}, 'batch-secid-5']}
            ],
