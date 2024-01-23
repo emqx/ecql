@@ -1,25 +1,48 @@
 name: CI
-on: [push, pull_request]
 
+on:
+  push:
+    branches:
+      - master
+  pull_request:
 jobs:
-  build:
-    runs-on: ubuntu-20.04
+  test:
+    name: OTP-${{matrix.otp}}, OS-${{matrix.os}}
+    runs-on: ${{matrix.os}}
+    services:
+      cassandra:
+        image: cassandra
+        ports:
+          - 9042:9042
+        options: --health-cmd "cqlsh --debug" --health-interval 5s --health-retries 10
     strategy:
+      fail-fast: false
       matrix:
-        otp: [23.2, 24.0.2]
+        os:
+          - "ubuntu-22.04"
+        otp:
+          - "25.3"
+          - "24.3"
+        rebar3:
+          - "3.20.0"
+        include:
+          - os: "ubuntu-20.04"
+            otp: "23.3"
+            rebar3: "3.17.0"
+          - os: "ubuntu-20.04"
+            otp: "22.3"
+            rebar3: "3.17.0"
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
+      - uses: actions/checkout@v3
+
+      - name: Setup Cassandra Tables
+        run: "docker exec ${{ job.services.cassandra.id }} cqlsh -u cassandra -p cassandra --debug localhost 9042 --execute=\"CREATE KEYSPACE IF NOT EXISTS test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': '1'};CREATE TABLE test.tab (first_id bigint, second_id text, col_text text, col_map map<text, text>, PRIMARY KEY (first_id, second_id));DESC keyspaces;\""
+
+      - uses: erlef/setup-beam@v1
         with:
-          submodules: recursive
-      - uses: gleam-lang/setup-erlang@v1.1.2
-        with:
-          otp-version: ${{ matrix.otp }}
-      - run: |
-          make
-      - name: Archive CT Logs
-        uses: actions/upload-artifact@v2
-        with:
-          name: ct-logs
-          path: _build/test/
-          retention-days: 1
+          otp-version: ${{matrix.otp}}
+          rebar3-version: ${{ matrix.rebar3 }}
+
+      - name: Common test, eunit, coverage
+        run: make tests
