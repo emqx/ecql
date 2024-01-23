@@ -84,9 +84,13 @@
 
 -define(PASSWORD_AUTHENTICATOR, <<"org.apache.cassandra.auth.PasswordAuthenticator">>).
 
--define(PREPARED(Id), (is_atom(Id) orelse is_binary(Id))).
+-define(PREPARED_STMT_ID(ID), {prepared_stmt_id, ID}).
 
--type prepared_id() :: atom() | binary().
+-type prepared_stmt_id() :: ?PREPARED_STMT_ID(binary()).
+
+-type prepared_key() :: term().
+
+-type prepared_id() :: atom() | binary() | prepared_stmt_id().
 
 -type query_string() :: string() | iodata().
 
@@ -174,46 +178,46 @@ async_query(CPid, Query, Values, CL, Callback) when is_atom(CL) ->
     gen_fsm:sync_send_event(CPid,{async_query, QObj, Callback}).
 
 %% @doc Prepare.
--spec prepare(pid(), query_string()) -> {ok, binary()} | {error, any()}.
+-spec prepare(pid(), query_string()) -> {ok, prepared_stmt_id()} | {error, any()}.
 prepare(CPid, Query) ->
     gen_fsm:sync_send_event(CPid, {prepare, iolist_to_binary(Query)}).
 
 %% @doc Named Prepare.
--spec prepare(pid(), Name :: atom(), query_string()) -> {ok, binary()} | {error, any()}.
-prepare(CPid, Name, Query) ->
-    gen_fsm:sync_send_event(CPid, {prepare, Name, iolist_to_binary(Query)}).
+-spec prepare(pid(), prepared_key(), query_string()) -> {ok, prepared_stmt_id()} | {error, any()}.
+prepare(CPid, PreparedKey, Query) ->
+    gen_fsm:sync_send_event(CPid, {prepare, PreparedKey, iolist_to_binary(Query)}).
 
 %% @doc Execute.
 -spec execute(pid(), prepared_id()) -> {ok, cql_result()} | {error, any()}.
-execute(CPid, Id) when ?PREPARED(Id) ->
+execute(CPid, Id) ->
     gen_fsm:sync_send_event(CPid, {execute, Id, #ecql_query{}}).
 
 -spec execute(pid(), prepared_id(), list()) -> {ok, cql_result()} | {error, any()}.
-execute(CPid, Id, Values) when ?PREPARED(Id) andalso is_list(Values) ->
+execute(CPid, Id, Values) when is_list(Values) ->
     execute(CPid, Id, Values, one).
 
 -spec execute(pid(), prepared_id(), list(), atom()) -> {ok, cql_result()} | {error, any()}.
-execute(CPid, Id, Values, CL) when ?PREPARED(Id) andalso is_atom(CL) ->
+execute(CPid, Id, Values, CL) when is_atom(CL) ->
     QObj = #ecql_query{consistency = ecql_cl:value(CL), values = Values},
     gen_fsm:sync_send_event(CPid, {execute, Id, QObj}).
 
 %% @doc Execute Asynchronously.
 -spec async_execute(pid(), prepared_id()) -> ok | {ok, reference()} | {error, any()}.
-async_execute(CPid, Id) when ?PREPARED(Id) ->
+async_execute(CPid, Id) ->
     gen_fsm:sync_send_event(CPid, {async_execute, Id, #ecql_query{}, default_async_callback}).
 
 -spec async_execute(pid(), prepared_id(), list()) -> ok | {ok, reference()} | {error, any()}.
-async_execute(CPid, Id, Values) when ?PREPARED(Id) andalso is_list(Values) ->
+async_execute(CPid, Id, Values) when is_list(Values) ->
     async_execute(CPid, Id, Values, one).
 
 -spec async_execute(pid(), prepared_id(), list(), atom() | callback()) -> ok | {ok, reference()} | {error, any()}.
-async_execute(CPid, Id, Values, CL) when ?PREPARED(Id) andalso is_atom(CL) ->
+async_execute(CPid, Id, Values, CL) when is_atom(CL) ->
     async_execute(CPid, Id, Values, CL, default_async_callback);
-async_execute(CPid, Id, Values, Callback) when ?PREPARED(Id) ->
+async_execute(CPid, Id, Values, Callback) ->
     async_execute(CPid, Id, Values, one, Callback).
 
 -spec async_execute(pid(), prepared_id(), list(), atom(), callback()) -> ok | {ok, reference()} | {error, any()}.
-async_execute(CPid, Id, Values, CL, Callback) when ?PREPARED(Id) andalso is_atom(CL) ->
+async_execute(CPid, Id, Values, CL, Callback) when is_atom(CL) ->
     QObj = #ecql_query{consistency = ecql_cl:value(CL), values = Values},
     gen_fsm:sync_send_event(CPid, {async_execute, Id, QObj, Callback}).
 
@@ -371,10 +375,10 @@ established({async_query, Query, Callback}, From, State = #state{proto_state = P
 established({prepare, Query}, From, State = #state{proto_state = ProtoSate}) ->
     request(From, fun ecql_proto:prepare/2, [Query, ProtoSate], State);
 
-established({prepare, Name, Query}, From, State = #state{requests = Reqs,
+established({prepare, PreparedKey, Query}, From, State = #state{requests = Reqs,
                                                          prepared = Prepared,
                                                          proto_state = ProtoSate}) ->
-    case dict:find(Name, Prepared) of
+    case dict:find(PreparedKey, Prepared) of
         {ok, Id} ->
             %%TODO: unprepare?
             {reply, {ok, Id}, established, State};
@@ -382,36 +386,36 @@ established({prepare, Name, Query}, From, State = #state{requests = Reqs,
             {Frame, ProtoState} = ecql_proto:prepare(Query, ProtoSate),
             StreamId = ecql_frame:stream(Frame),
             NewState = State#state{proto_state = ProtoState,
-                                   prepared    = dict:store({pending, StreamId}, Name, Prepared),
+                                   prepared    = dict:store({pending, StreamId}, PreparedKey, Prepared),
                                    requests    = dict:store(StreamId, From, Reqs)},
             {next_state, established, NewState}
     end;
 
-established({execute, Name, Query}, From, State = #state{prepared = Prepared}) when is_atom(Name) ->
-    case dict:find(Name, Prepared) of
-        {ok, Id} ->
-            established({execute, Id, Query}, From, State);
-        error ->
-            {reply, {error, not_prepared}, established, State}
-    end;
-
-established({execute, Id, Query}, From, State = #state{proto_state = ProtoSate}) when is_binary(Id) ->
+established({execute, ?PREPARED_STMT_ID(Id), Query}, From, State = #state{proto_state = ProtoSate}) ->
     request(From, fun ecql_proto:execute/3, [Id, Query, ProtoSate], State);
 
-established({async_execute, Name, Query, Callback}, From, State = #state{prepared = Prepared}) when is_atom(Name) ->
-    case dict:find(Name, Prepared) of
+established({execute, PreparedKey, Query}, From, State = #state{prepared = Prepared}) ->
+    case dict:find(PreparedKey, Prepared) of
         {ok, Id} ->
-            established({async_execute, Id, Query, Callback}, From, State);
+            established({execute, ?PREPARED_STMT_ID(Id), Query}, From, State);
         error ->
             {reply, {error, not_prepared}, established, State}
     end;
 
-established({async_execute, Id, Query, Callback}, From, State = #state{proto_state = ProtoSate})
+established({async_execute, ?PREPARED_STMT_ID(Id), Query, Callback}, From, State = #state{proto_state = ProtoSate})
   when is_binary(Id) ->
     {Reply, Callback1} = make_callback(Callback, From),
     {_, _, NewState} = request({async, Callback1}, fun ecql_proto:execute/3,
                                [Id, Query, ProtoSate], State),
     {reply, Reply, established, NewState};
+
+established({async_execute, PreparedKey, Query, Callback}, From, State = #state{prepared = Prepared}) ->
+    case dict:find(PreparedKey, Prepared) of
+        {ok, Id} ->
+            established({async_execute, ?PREPARED_STMT_ID(Id), Query, Callback}, From, State);
+        error ->
+            {reply, {error, not_prepared}, established, State}
+    end;
 
 established({batch, Query}, From, State = #state{prepared = Prepared, proto_state = ProtoSate})
         when is_record(Query, ecql_batch) ->
@@ -531,11 +535,14 @@ received(Frame = ?RESULT_FRAME(set_keyspace, #ecql_set_keyspace{keyspace = Keysp
 
 received(Frame = ?RESULT_FRAME(prepared, #ecql_prepared{id = Id}), State = #state{prepared = Prepared}) ->
     PendingKey = {pending, ecql_frame:stream(Frame)},
-    Prepared1 = case dict:find(PendingKey, Prepared) of
-                    {ok, Name} -> dict:store(Name, Id, dict:erase(PendingKey, Prepared));
-                    error      -> Prepared
-                end,
-    response(ecql_frame:stream(Frame), {ok, Id}, State#state{prepared = Prepared1});
+    Prepared1 =
+        case dict:find(PendingKey, Prepared) of
+            {ok, PreparedKey} ->
+                dict:store(PreparedKey, Id, dict:erase(PendingKey, Prepared));
+            error ->
+                Prepared
+        end,
+    response(ecql_frame:stream(Frame), {ok, ?PREPARED_STMT_ID(Id)}, State#state{prepared = Prepared1});
 
 received(Frame = ?RESULT_FRAME(schema_change, #ecql_schema_change{type = Type, target = Target, options = Options}), State) ->
     response(ecql_frame:stream(Frame), {ok, {Type, Target, Options}}, State);
@@ -569,13 +576,16 @@ auth_token(Username, Password) ->
     <<0, Username/binary, 0, Password/binary>>.
 
 pre_format_queries(Queries, Prepared) ->
-    lists:map(fun({QueryOrId, Values}) ->
-        {Kind, QueryOrId1} =
-            case dict:find(QueryOrId, Prepared) of
-                {ok, Id} -> {?BATCH_QUERY_KIND_PREPARED_ID, Id};
-                error -> {?BATCH_QUERY_KIND_NORMAL_QUERY, iolist_to_binary(QueryOrId)}
-            end,
-        #ecql_batch_query{kind = Kind, query_or_id = QueryOrId1, values = Values}
+    lists:map(fun
+        ({?PREPARED_STMT_ID(Id), Values}) ->
+            #ecql_batch_query{kind = ?BATCH_QUERY_KIND_PREPARED_ID, query_or_id = Id, values = Values};
+        ({QueryOrPrepareKey, Values}) ->
+            {Kind, QueryOrId1} =
+                case dict:find(QueryOrPrepareKey, Prepared) of
+                    {ok, Id} -> {?BATCH_QUERY_KIND_PREPARED_ID, Id};
+                    error -> {?BATCH_QUERY_KIND_NORMAL_QUERY, iolist_to_binary(QueryOrPrepareKey)}
+                end,
+            #ecql_batch_query{kind = Kind, query_or_id = QueryOrId1, values = Values}
     end, Queries).
 
 %% Result returned at the end of args

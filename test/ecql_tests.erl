@@ -36,7 +36,7 @@
 %% - A running cassandra instance
 %%   docker run --rm --name cassandra -p 9042:9042 cassandra:3.11.14
 %% - Prepared keyspace and table
-%%   CREATE KEYSPACE test WITH replication = {'SimpleStrategy', 'replication_factor': 1};
+%%   CREATE KEYSPACE IF NOT EXISTS test WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor' : '1' };
 %%   CREATE TABLE test.tab (first_id bigint, second_id text, col_text text, col_map map<text, text>, PRIMARY KEY (first_id, second_id));
 
 ecql_test_() ->
@@ -112,11 +112,11 @@ t_named_prepare(C) ->
     end.
 
 t_batch_query(C) ->
-    {ok, _Id} = ecql:prepare(C, insert, "insert into test.tab (first_id, second_id) values (?, ?)"),
+    {ok, Id} = ecql:prepare(C, insert, "insert into test.tab (first_id, second_id) values (?, ?)"),
     Rows = [
-            {insert, [{bigint, 1}, 'batch-secid-1']},
+            {Id, [{bigint, 1}, 'batch-secid-1']},
             {insert, [{bigint, 2}, 'batch-secid-2']},
-            {insert, [{bigint, 3}, 'batch-secid-3']},
+            {Id, [{bigint, 3}, 'batch-secid-3']},
             {insert, [{bigint, 4}, 'batch-secid-4']},
             {insert, [{bigint, 5}, 'batch-secid-5']}
            ],
