@@ -39,24 +39,24 @@
 name(?TYPE_CUSTOM)   -> custom;
 name(?TYPE_ASCII)    -> ascii;
 name(?TYPE_BIGINT)   -> bigint;
-name(?TYPE_BLOB)     -> blob; 
+name(?TYPE_BLOB)     -> blob;
 name(?TYPE_BOOLEAN)  -> boolean;
 name(?TYPE_COUNTER)  -> counter;
 name(?TYPE_DECIMAL)  -> decimal;
-name(?TYPE_DOUBLE)   -> double; 
-name(?TYPE_FLOAT)    -> float; 
+name(?TYPE_DOUBLE)   -> double;
+name(?TYPE_FLOAT)    -> float;
 name(?TYPE_INT)      -> int;
-name(?TYPE_TIMESTAMP)-> timestamp; 
+name(?TYPE_TIMESTAMP)-> timestamp;
 name(?TYPE_UUID)     -> uuid;
 name(?TYPE_VARCHAR)  -> varchar;
-name(?TYPE_VARINT)   -> varint; 
+name(?TYPE_VARINT)   -> varint;
 name(?TYPE_TIMEUUID) -> timeuuid;
-name(?TYPE_INET)     -> inet; 
-name(?TYPE_LIST)     -> list; 
-name(?TYPE_MAP)      -> map; 
+name(?TYPE_INET)     -> inet;
+name(?TYPE_LIST)     -> list;
+name(?TYPE_MAP)      -> map;
 name(?TYPE_SET)      -> set;
 name(?TYPE_UDT)      -> udt;
-name(?TYPE_TUPLE)    -> tuple. 
+name(?TYPE_TUPLE)    -> tuple.
 
 value(custom)        -> ?TYPE_CUSTOM;
 value(ascii)         -> ?TYPE_ASCII;
@@ -87,6 +87,8 @@ is_type(T) ->
 %% Encode
 %%------------------------------------------------------------------------------
 
+encode(null) ->
+    null;
 encode(A) when is_atom(A) ->
     encode(text, atom_to_list(A));
 encode(L) when is_list(L) ->
@@ -180,6 +182,8 @@ encode({tuple, Types}, Tuple) ->
     Encode = fun(Type, El) -> to_bytes(encode(Type, El)) end,
     << <<(Encode(Type, El))/binary>> || {Type, El} <- L >>.
 
+to_bytes(null) ->
+    <<-1:32/big-signed-integer>>;
 to_bytes(Bin) ->
     <<(size(Bin)):?int, Bin/binary>>.
 
@@ -272,4 +276,3 @@ decode({tuple, ElTypes}, Size, Bin) ->
 
 from_bytes(<<Size:?int, Bin:Size/binary, Rest/binary>>) ->
     {Bin, Rest}.
-

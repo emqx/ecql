@@ -81,7 +81,32 @@ query_test() ->
                                                consistency = ?CL_ONE,
                                                values = [<<1:?int>>, <<2:?int>>, <<3:?int>>]}},
     {Frame3, State3} = ecql_proto:query(<<"select">>, ?CL_ONE, [{int, 1}, {int, 2}, {int, 3}], State2),
-    ?assertEqual(FrameC, Frame3).
+    ?assertEqual(FrameC, Frame3),
+
+    {Frame4, _} = ecql_proto:query(<<"select">>, ?CL_ONE, [<<"text">>, {int, 1}, atom, null],
+                                        State),
+    ?assertMatch(
+       #ecql_frame{
+          message = #ecql_query{values = [ <<"text">>
+                                         , BinInt
+                                         , <<"atom">>
+                                         , null
+                                         ]}
+         } when is_binary(BinInt),
+       Frame4),
+    _ = ecql_frame:serialize(Frame4),
+
+    %% Only nulls
+    {Frame5, _} = ecql_proto:query(<<"select">>, ?CL_ONE, [null, null, null],
+                                        State),
+    ?assertMatch(
+       #ecql_frame{
+          message = #ecql_query{values = [null, null, null]}
+         },
+       Frame5),
+    _ = ecql_frame:serialize(Frame5),
+
+    ok.
 
 execute_test() ->
     State = init(),
@@ -108,4 +133,3 @@ register_test() ->
     ?assertMatch({Frame, _}, ecql_proto:register([<<"SCHEMA_CHANGE">>], State)).
 
 -endif.
-
