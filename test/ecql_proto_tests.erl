@@ -106,6 +106,62 @@ query_test() ->
        Frame5),
     _ = ecql_frame:serialize(Frame5),
 
+    {Frame6, _} = ecql_proto:batch(
+                    #ecql_batch{
+                       consistency = ?CL_ONE,
+                       queries =
+                           [ #ecql_batch_query{
+                                kind = ?BATCH_QUERY_KIND_PREPARED_ID,
+                                query_or_id = <<19,4,11,242,254,138,108,237,216,180,240,
+                                                1,68,36,120,219>>,
+                                values = [<<"text">>, {int, 1}, atom, null]
+                               }
+                           ]
+                      },
+                    State),
+    ?assertMatch(
+       #ecql_frame{
+          message = #ecql_batch{
+                       queries = [#ecql_batch_query{
+                                     values = [ <<"text">>
+                                              , BinInt
+                                              , <<"atom">>
+                                              , null
+                                              ]
+                                    }]
+                      }
+         } when is_binary(BinInt),
+       Frame6),
+    _ = ecql_frame:serialize(Frame6),
+
+    %% only nulls
+    {Frame7, _} = ecql_proto:batch(
+                    #ecql_batch{
+                       consistency = ?CL_ONE,
+                       queries =
+                           [ #ecql_batch_query{
+                                kind = ?BATCH_QUERY_KIND_PREPARED_ID,
+                                query_or_id = <<19,4,11,242,254,138,108,237,216,180,240,
+                                                1,68,36,120,219>>,
+                                values = [null, null, null]
+                               }
+                           ]
+                      },
+                    State),
+    ?assertMatch(
+       #ecql_frame{
+          message = #ecql_batch{
+                       queries = [#ecql_batch_query{
+                                     values = [ null
+                                              , null
+                                              , null
+                                              ]
+                                    }]
+                      }
+         },
+       Frame7),
+    _ = ecql_frame:serialize(Frame7),
+
     ok.
 
 execute_test() ->
