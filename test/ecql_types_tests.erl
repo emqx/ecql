@@ -92,7 +92,7 @@ encode_decode_test() ->
 
     Set = [1, 2, 3],
     SetBin = encode({set, bigint}, Set),
-    ?assertMatch({Set, <<>>}, decode({set, bigint}, size(SetBin), SetBin)), 
+    ?assertMatch({Set, <<>>}, decode({set, bigint}, size(SetBin), SetBin)),
 
     {MegaSecs, Secs, _MicroSecs} = os:timestamp(),
     Timestamp = MegaSecs * 1000000 + Secs,
@@ -111,6 +111,11 @@ encode_decode_test() ->
     Tuple = {1, <<"haha">>, 2},
     Types = {bigint, text, counter},
     TupleBin = encode({tuple, Types}, Tuple),
-    ?assertEqual({Tuple, <<>>}, decode({tuple, Types}, size(TupleBin), TupleBin)).
+    ?assertEqual({Tuple, <<>>}, decode({tuple, Types}, size(TupleBin), TupleBin)),
+
+    EncodedNull = ecql_types:to_bytes(ecql_types:encode(null)),
+    ?assertEqual(<<-1:32/big-signed-integer>>, EncodedNull),
+
+    ok.
 
 -endif.

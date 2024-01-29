@@ -141,4 +141,3 @@ serialize_query_test() ->
     ecql_frame:serialize_req(Query).
 
 -endif.
-
