@@ -1,0 +1,17 @@
+services:
+  cassandra:
+    image: cassandra:4
+    ports:
+      - 9042:9042
+    healthcheck:
+      test: ["CMD", "cqlsh", "--debug"]
+      interval: 5s
+      retries: 20
+  init:
+    image: cassandra:4
+    depends_on:
+      - cassandra
+    restart: "no"
+    entrypoint: ["/init.sh"]
+    volumes:
+      - ./init.sh:/init.sh
