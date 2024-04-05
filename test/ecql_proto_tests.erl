@@ -80,7 +80,7 @@ query_test() ->
                          message = #ecql_query{query = <<"select">>,
                                                consistency = ?CL_ONE,
                                                values = [<<1:?int>>, <<2:?int>>, <<3:?int>>]}},
-    {Frame3, State3} = ecql_proto:query(<<"select">>, ?CL_ONE, [{int, 1}, {int, 2}, {int, 3}], State2),
+    {Frame3, _State3} = ecql_proto:query(<<"select">>, ?CL_ONE, [{int, 1}, {int, 2}, {int, 3}], State2),
     ?assertEqual(FrameC, Frame3),
 
     {Frame4, _} = ecql_proto:query(<<"select">>, ?CL_ONE, [<<"text">>, {int, 1}, atom, null],

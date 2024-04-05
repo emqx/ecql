@@ -30,17 +30,15 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--import(ecql_frame, [parser/0, serialize/1]).
-
 ready_parse_test() ->
-    Parser = parser(),
+    Parser = ecql_frame:parser(),
     {ok, #ecql_frame{stream = StreamId, message = Ready}, <<>>} = Parser(<<131,0,0,193,2,0,0,0,0>>),
     ?assertEqual(193, StreamId),
     ?assertEqual(#ecql_ready{}, Ready).
 
 %% AUTHENTICATE Frame
 auth_parse_test() ->
-    Parser = parser(),
+    Parser = ecql_frame:parser(),
     {ok, #ecql_frame{stream = StreamId, message = Auth}, <<>>} = Parser(
                 <<131,0,0,87,3,0,0,0,49,0,47,111,114,103,46,97,
                   112,97,99,104,101,46,99,97,115,115,97,110,100,
@@ -53,21 +51,21 @@ auth_parse_test() ->
 
 %%AUTH_SUCCESS FRAME
 auth_sucess_parse_test() ->
-    Parser = parser(),
+    Parser = ecql_frame:parser(),
     {ok, #ecql_frame{stream = 87, opcode = ?OP_AUTH_SUCCESS, message = AuthSucc}, <<>>}
         = Parser(<<131,0,0,87,16,0,0,0,4,255,255,255,255>>),
     ?assertEqual(#ecql_auth_success{token = <<>>}, AuthSucc).
 
 %%SET_KEYSPACE Result FRAME
 set_keyspace_result_parse_test() ->
-    Parser = parser(),
+    Parser = ecql_frame:parser(),
     %%Set Keyspace Result
     {ok, #ecql_frame{stream = 194, opcode = ?OP_RESULT, message = #ecql_result{data = SetKeyspace}}, <<>>}
         = Parser(<<131,0,0,194,8,0,0,0,10,0,0,0,3,0,4,116,101,115, 116>>),
     ?assertEqual(#ecql_set_keyspace{keyspace = <<"test">>}, SetKeyspace).
 
 rows_result_parse_test() ->
-    Parser = parser(),
+    Parser = ecql_frame:parser(),
     Bin = <<131,0,0,195,8,0,0,1,160,0,0,0,2,0,0,0,1,0,0,0,
             11,0,4,116,101,115,116,0,3,116,97,98,0,8,102,
             105,114,115,116,95,105,100,0,2,0,9,115,101,99,
@@ -105,7 +103,7 @@ rows_result_parse_test() ->
 
     {ok, #ecql_frame{stream = 195, opcode = ?OP_RESULT,
                      message = #ecql_result{kind = rows, data = Data}}, <<>>} = Parser(Bin),
-    #ecql_rows{meta = Meta, data = [Row1|_] = Rows} = Data,
+    #ecql_rows{meta = Meta, data = [Row1|_]} = Data,
     ?assertEqual(Columns, Meta#ecql_rows_meta.columns),
     ?assertEqual([3,<<"haha">>,null,null,null,null,null,null, null,<<"haha">>,null], Row1).
 
