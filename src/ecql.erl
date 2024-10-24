@@ -381,18 +381,16 @@ established({call, From}, {prepare, Query}, State = #state{proto_state = ProtoSa
 established({call, From}, {prepare, PreparedKey, Query}, State = #state{requests = Reqs,
                                                                         prepared = Prepared,
                                                                         proto_state = ProtoSate}) ->
-    case dict:find(PreparedKey, Prepared) of
-        {ok, Id} ->
-            %%TODO: unprepare?
-            {keep_state, State, [{reply, From, {ok, Id}}]};
-        error ->
-            {Frame, ProtoState} = ecql_proto:prepare(Query, ProtoSate),
-            StreamId = ecql_frame:stream(Frame),
-            NewState = State#state{proto_state = ProtoState,
-                                   prepared    = dict:store({pending, StreamId}, PreparedKey, Prepared),
-                                   requests    = dict:store(StreamId, From, Reqs)},
-            {keep_state, NewState}
-    end;
+    %% Since the [Native protocol](https://cassandra.apache.org/_/native_protocol.html)
+    %% doesn't support Unprepare opertation, all we need to do here is to send each prepare
+    %% request to Cassandra and store the PreparedId of each Response without caring if the
+    %% PreparedKey already exists.
+    {Frame, ProtoState} = ecql_proto:prepare(Query, ProtoSate),
+    StreamId = ecql_frame:stream(Frame),
+    NewState = State#state{proto_state = ProtoState,
+                           prepared    = dict:store({pending, StreamId}, PreparedKey, Prepared),
+                           requests    = dict:store(StreamId, From, Reqs)},
+    {keep_state, NewState};
 
 established({call, From}, {execute, ?PREPARED_STMT_ID(Id), Query}, State = #state{proto_state = ProtoSate}) ->
     request(From, fun ecql_proto:execute/3, [Id, Query, ProtoSate], State);

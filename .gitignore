@@ -15,3 +15,4 @@ erlang.mk
 _build
 rebar.lock
 *.swp
+.DS_Store
